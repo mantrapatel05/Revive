@@ -4,7 +4,7 @@ import numpy as np, pandas as pd
 ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
 from app.execution.simulator import SubscriptionSimulator
 from app.economics import EconomicsEngine
-from app.evaluation.ope import doubly_robust_estimate
+from app.evaluation.ope import estimate_dr
 
 ACTIONS=['WAIT','NUDGE','MANUAL_RECOVERY','ESCALATE']
 
@@ -29,5 +29,21 @@ def generate(n=300):
     return pd.DataFrame(rows)
 
 def main():
-    df=generate(); result=doubly_robust_estimate(df,FixedPolicy(),TrueOutcome(SubscriptionSimulator(42)),RandomBehavior()); print(result)
+    df=generate()
+    n=len(df)
+    action_to_idx={a:i for i,a in enumerate(ACTIONS)}
+    actions=np.array([action_to_idx[a] for a in df['action']])
+    rewards=np.array(df['reward'])
+    behavior_probs=np.full((n,len(ACTIONS)),0.25)
+    policy=FixedPolicy(); sim=SubscriptionSimulator(42)
+    policy_probs=np.zeros((n,len(ACTIONS)))
+    outcome_model_pred=np.zeros((n,len(ACTIONS)))
+    for i,row in df.iterrows():
+        ctx=row.to_dict()
+        pp=policy.get_action_probabilities(ctx)
+        for j,a in enumerate(ACTIONS):
+            policy_probs[i,j]=pp[a]
+            outcome_model_pred[i,j]=sim.expected_values(ctx).get(a,0.0)
+    result=estimate_dr(df,policy_probs,behavior_probs,actions,rewards,outcome_model_pred)
+    print(result)
 if __name__=='__main__': main()

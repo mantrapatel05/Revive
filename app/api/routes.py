@@ -59,7 +59,7 @@ def replay(case_id: str, request: Request):
     case = row.iloc[0].to_dict()
     sim = request.app.state.pipeline.simulator
     true = {a: sim.get_true_probability(case, a) for a in sim.ACTIONS}
-    values = sim.economics.rank(case, true)
+    values = sim.economics.rank_incremental(case, true)
     return {'case_id': case_id, 'probabilities': true, 'expected_net_values': values}
 
 @router.get('/')
