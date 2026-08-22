@@ -1,0 +1,102 @@
+import sqlite3
+from datetime import datetime, timezone
+from app.config import DATABASE_PATH
+
+
+def get_conn():
+    conn = sqlite3.connect(DATABASE_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA foreign_keys=ON')
+    return conn
+
+
+def init_db():
+    with get_conn() as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT,
+            event_id TEXT,
+            case_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            payload_json TEXT NOT NULL)''')
+        cols={r[1] for r in conn.execute('PRAGMA table_info(audit_logs)').fetchall()}
+        if 'decision_id' not in cols: conn.execute('ALTER TABLE audit_logs ADD COLUMN decision_id TEXT')
+        if 'event_id' not in cols: conn.execute('ALTER TABLE audit_logs ADD COLUMN event_id TEXT')
+        conn.execute('''CREATE TABLE IF NOT EXISTS webhook_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE NOT NULL,
+            event_type TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            received_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            processed_at TEXT,
+            last_error TEXT)''')
+        wcols={r[1] for r in conn.execute('PRAGMA table_info(webhook_events)').fetchall()}
+        if 'event_type' not in wcols: conn.execute("ALTER TABLE webhook_events ADD COLUMN event_type TEXT NOT NULL DEFAULT ''")
+        if 'payload_json' not in wcols: conn.execute("ALTER TABLE webhook_events ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'")
+        if 'status' not in wcols: conn.execute("ALTER TABLE webhook_events ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'")
+        if 'processed_at' not in wcols: conn.execute("ALTER TABLE webhook_events ADD COLUMN processed_at TEXT")
+        if 'last_error' not in wcols: conn.execute("ALTER TABLE webhook_events ADD COLUMN last_error TEXT")
+        conn.execute('''CREATE TABLE IF NOT EXISTS execution_intents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT UNIQUE NOT NULL,
+            case_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            result_json TEXT)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS decision_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT UNIQUE NOT NULL,
+            case_id TEXT NOT NULL,
+            feature_json TEXT NOT NULL,
+            action TEXT,
+            policy_version TEXT,
+            model_version TEXT,
+            prompt_version TEXT,
+            scenario_version TEXT,
+            created_at TEXT NOT NULL)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS approval_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id TEXT NOT NULL,
+            amount REAL NOT NULL,
+            reason TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            reviewer TEXT,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT)''')
+
+
+def enqueue_webhook_event(event_id: str, event_type: str, payload_json: str, received_at: str) -> bool:
+    with get_conn() as conn:
+        try:
+            conn.execute(
+                'INSERT INTO webhook_events(event_id,event_type,payload_json,status,received_at) VALUES(?,?,?,?,?)',
+                (event_id, event_type, payload_json, 'PENDING', received_at))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def claim_webhook_events(limit: int = 20):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM webhook_events WHERE status='PENDING' ORDER BY id LIMIT ?", (limit,)).fetchall()
+        if rows:
+            ids=[r['event_id'] for r in rows]
+            conn.executemany("UPDATE webhook_events SET status='PROCESSING' WHERE event_id=?", [(i,) for i in ids])
+        return rows
+
+
+def mark_webhook_processed(event_id: str, processed_at: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE webhook_events SET status='PROCESSED', processed_at=?, last_error=NULL WHERE event_id=?", (processed_at,event_id))
+
+
+def mark_webhook_failed(event_id: str, error: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE webhook_events SET status='PENDING', last_error=? WHERE event_id=?", (error,event_id))

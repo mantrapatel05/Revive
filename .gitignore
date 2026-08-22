@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+*.db
+models/*.joblib
+models/*.pkl
+data/generated/*.csv
+data/evaluation/*.json
+data/evaluation/evaluation_report.md
+.pytest_cache/
+docs/
+venv/
+.venv/
+env/

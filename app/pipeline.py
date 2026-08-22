@@ -1,0 +1,113 @@
+from datetime import datetime, timezone
+from app.agents.recovery_agent import RecoveryAgent
+from app.policy.gate import PolicyGate
+from app.execution.simulator import SubscriptionSimulator
+from app.audit.logger import AuditLogger
+from app.economics import EconomicsEngine, MerchantConfig
+from app.decision.versioning import versions
+from app.decision.replay import stable_hash, DecisionStore
+from app.execution.authorization import ExecutionAuthorization
+from app.execution.outbox import enqueue_execution_intent
+from app.execution.circuit_breaker import CircuitBreaker
+from app.db import init_db
+from app.approval import create_approval_request
+
+
+class RecoveryPipeline:
+    def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode="BALANCED", merchant_config=None, decision_store=None):
+        init_db()
+        self.model = model
+        self.simulator = simulator or SubscriptionSimulator()
+        self.policy = policy or PolicyGate()
+        self.agent = agent or RecoveryAgent()
+        self.audit = audit or AuditLogger()
+        self.merchant_config = merchant_config or MerchantConfig(risk_mode=risk_mode)
+        self.economics = EconomicsEngine(merchant_config=self.merchant_config)
+        self.risk_mode = self.merchant_config.risk_mode
+        self.risk_z = {"CONSERVATIVE": 2.0, "BALANCED": 1.0, "AGGRESSIVE": 0.0}.get(risk_mode, 1.0)
+        self.circuit_breaker = CircuitBreaker()
+        self.decision_store = decision_store or DecisionStore()
+
+    def _predictions(self, case: dict, source: str):
+        if self.model is not None and source == "ml":
+            return self.model.predict_all_actions(case)
+        return {
+            a: {"mean": self.simulator.get_true_probability(case, a), "std": 0.0, "lower": self.simulator.get_true_probability(case, a), "upper": self.simulator.get_true_probability(case, a), "n_models": 0}
+            for a in ["WAIT", "NUDGE", "MANUAL_RECOVERY", "ESCALATE"]
+        }
+
+    def process(self, case: dict, source: str = "ml") -> dict:
+        predictions = self._predictions(case, source)
+        probs = {a: float(predictions[a]["mean"]) for a in predictions}
+        uncertainty = {a: float(predictions[a].get("std", 0.0)) for a in predictions}
+        native_retry_scheduled = bool(case.get("native_retry_scheduled", False))
+        feasibility = self.policy.feasible(case, predictions, native_retry_scheduled)
+        feasible = [a for a, r in feasibility.items() if r.decision == "APPROVED"]
+
+        incremental = self.economics.rank_incremental(case, probs, uncertainty, self.risk_z)
+        rec = self.agent.decide(case, probs)
+        rec_action = rec["action"]
+
+        # Abstain when the best non-WAIT action is not robustly positive.
+        candidates = {a: v for a, v in incremental.items() if a in feasible}
+        best_action = max(candidates, key=candidates.get) if candidates else "ESCALATE"
+        best_value = candidates.get(best_action, float("-inf"))
+        if best_action != "WAIT" and best_value <= 0:
+            best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
+        if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
+            best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
+
+        execution = self.simulator.execute(case, best_action)
+        if best_action == "MANUAL_RECOVERY":
+            self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
+
+        authorization = None
+        intent_id = None
+        if best_action == "MANUAL_RECOVERY":
+            authorization = ExecutionAuthorization.create(case["event_id"], best_action, versions()["policy_version"], versions()["model_version"])
+            intent_id = enqueue_execution_intent(authorization, {"case": case, "authorization": authorization.__dict__})
+
+        wait_exec = self.simulator.execute(case, "WAIT") if best_action != "WAIT" else None
+        wait_net = (wait_exec.recovered_amount - wait_exec.cost) if wait_exec else 0.0
+        net = execution.recovered_amount - execution.cost
+
+        approval_id = None
+        if best_action == "ESCALATE":
+            approval_id = create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "REVIVE escalated decision", {"case": case, "feasible_actions": {a: r.decision for a, r in feasibility.items()}})
+
+        decision = {
+            "event_id": case["event_id"],
+            "case_id": case["event_id"],
+            "amount": float(case.get("amount", 0.0)),
+            "state": case.get("subscription_status"),
+            "recommended_action": rec_action,
+            "recommendation_source": rec["source"],
+            "recommendation_reason": rec["reason"],
+            "probabilities": probs,
+            "uncertainty": uncertainty,
+            "risk_mode": self.risk_mode,
+            "incremental_values": incremental,
+            "feasible_actions": {a: r.decision for a, r in feasibility.items()},
+            "chosen_action": best_action,
+            "policy_action": best_action,
+            "policy_decision": feasibility[best_action].decision if best_action in feasibility else "BLOCKED",
+            "policy_id": feasibility[best_action].policy_id if best_action in feasibility else "",
+            "policy_reasons": feasibility[best_action].reasons if best_action in feasibility else [],
+            "policy_checks": [c.__dict__ for c in feasibility[best_action].checks] if best_action in feasibility else [],
+            "execution_status": "SUCCESS" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILURE"),
+            "recovered_amount": execution.recovered_amount,
+            "intervention_cost": execution.cost,
+            "net_recovered": net,
+            "incremental_realized_value": net - wait_net,
+            "time_to_recovery": execution.time_to_recovery,
+            "execution_intent_id": intent_id,
+            "approval_id": approval_id,
+            "authorization": authorization.__dict__ if authorization else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **versions(),
+        }
+        decision["decision_id"] = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
+        decision["features"] = dict(case)
+        self.decision_store.save(decision)
+        self.audit.log(decision)
+        return decision
