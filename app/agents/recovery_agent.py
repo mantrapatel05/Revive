@@ -1,14 +1,14 @@
 import json
 import requests
-from app.config import OPENAI_API_KEY, OPENAI_MODEL, PROMPT_VERSION
+from app.config import GROQ_API_KEY, GROQ_MODEL, PROMPT_VERSION
 from app.economics import EconomicsEngine
 
 ACTIONS = ["WAIT","NUDGE","MANUAL_RECOVERY","ESCALATE"]
 
 class RecoveryAgent:
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.api_key = api_key if api_key is not None else OPENAI_API_KEY
-        self.model = model or OPENAI_MODEL
+        self.api_key = api_key if api_key is not None else GROQ_API_KEY
+        self.model = model or GROQ_MODEL
         self.economics = EconomicsEngine()
 
     def deterministic(self, case: dict, probabilities: dict[str,float]) -> dict:
@@ -27,15 +27,33 @@ class RecoveryAgent:
             return None
         try:
             r = requests.post(
-                "https://api.openai.com/v1/responses",
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization":f"Bearer {self.api_key}","Content-Type":"application/json"},
-                json={"model":self.model,"input":json.dumps(prompt)},
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "user", "content": json.dumps(prompt)}
+                    ],
+                    "temperature": 0.2
+                },
                 timeout=20,
             )
             r.raise_for_status()
-            text = r.json().get("output_text", "").strip()
+            res_data = r.json()
+            if "choices" in res_data and len(res_data["choices"]) > 0:
+                text = res_data["choices"][0].get("message", {}).get("content", "").strip()
+            else:
+                text = res_data.get("output_text", "").strip()
+
             if not text:
                 return None
+
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
             parsed = json.loads(text)
             action = str(parsed.get("action","")).upper()
             if action not in ACTIONS:
