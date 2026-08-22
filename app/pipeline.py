@@ -14,12 +14,14 @@ from app.execution.outbox import enqueue_execution_intent
 from app.execution.circuit_breaker import CircuitBreaker
 from app.db import init_db
 from app.approval import create_approval_request
+from app.config import DATA_DIR
+from app.monitoring.drift import DriftDetector
 
 logger = logging.getLogger(__name__)
 
 
 class RecoveryPipeline:
-    def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode="BALANCED", merchant_config=None, decision_store=None):
+    def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode="BALANCED", merchant_config=None, decision_store=None, drift_detector=None):
         init_db()
         self.model = model
         self.simulator = simulator or SubscriptionSimulator()
@@ -33,6 +35,7 @@ class RecoveryPipeline:
         self.circuit_breaker = CircuitBreaker()
         self.live_executor = LiveExecutor()
         self.decision_store = decision_store or DecisionStore()
+        self.drift_detector = drift_detector or DriftDetector(DATA_DIR / 'training_data.csv')
 
     def _predictions(self, case: dict, source: str):
         if self.model is not None and source == "ml":
@@ -43,27 +46,56 @@ class RecoveryPipeline:
         }
 
     def process(self, case: dict, source: str = "ml") -> dict:
-        predictions = self._predictions(case, source)
-        probs = {a: float(predictions[a]["mean"]) for a in predictions}
-        uncertainty = {a: float(predictions[a].get("std", 0.0)) for a in predictions}
-        native_retry_scheduled = bool(case.get("native_retry_scheduled", False))
-        feasibility = self.policy.feasible(case, predictions, native_retry_scheduled)
-        feasible = [a for a, r in feasibility.items() if r.decision == "APPROVED"]
+        is_live = bool(case.get("is_live", False))
+        distribution_shift_flagged = False
+        drift_details = None
 
-        incremental = self.economics.rank_incremental(case, probs, uncertainty, self.risk_z)
-        rec = self.agent.decide(case, probs)
-        rec_action = rec["action"]
+        # Check distribution shift on live cases before model scoring
+        if is_live and self.drift_detector is not None:
+            drift_res = self.drift_detector.detect_case_drift(case)
+            if drift_res.get("drift_detected", False):
+                distribution_shift_flagged = True
+                drift_details = drift_res
+                logger.warning(
+                    "[DRIFT] Distribution shift detected for live case %s: %s — routing straight to ESCALATE",
+                    case.get("event_id"), drift_res.get("drifted_features"),
+                )
 
-        # Abstain when the best non-WAIT action is not robustly positive.
-        candidates = {a: v for a, v in incremental.items() if a in feasible}
-        best_action = max(candidates, key=candidates.get) if candidates else "ESCALATE"
-        best_value = candidates.get(best_action, float("-inf"))
-        if best_action != "WAIT" and best_value <= 0:
-            best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
-        if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
-            best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
+        if distribution_shift_flagged:
+            # When out-of-distribution, ML recovery estimates lack empirical support.
+            # Fail safe: route directly to ESCALATE for human review.
+            probs = {a: 0.0 for a in ["WAIT", "NUDGE", "MANUAL_RECOVERY", "ESCALATE"]}
+            uncertainty = {a: 0.0 for a in probs}
+            incremental = {"WAIT": 0.0, "NUDGE": 0.0, "MANUAL_RECOVERY": 0.0, "ESCALATE": -self.economics.action_cost(case, "ESCALATE")}
+            rec_action = "ESCALATE"
+            rec = {
+                "action": "ESCALATE",
+                "source": "drift_detector",
+                "reason": f"Distribution shift detected in features: {list(drift_details.get('drifted_features', {}).keys())}",
+            }
+            feasibility = self.policy.feasible(case, {a: {"mean": 0.0, "std": 0.0} for a in probs}, bool(case.get("native_retry_scheduled", False)))
+            feasible = [a for a, r in feasibility.items() if r.decision == "APPROVED"]
+            best_action = "ESCALATE"
+        else:
+            predictions = self._predictions(case, source)
+            probs = {a: float(predictions[a]["mean"]) for a in predictions}
+            uncertainty = {a: float(predictions[a].get("std", 0.0)) for a in predictions}
+            native_retry_scheduled = bool(case.get("native_retry_scheduled", False))
+            feasibility = self.policy.feasible(case, predictions, native_retry_scheduled)
+            feasible = [a for a, r in feasibility.items() if r.decision == "APPROVED"]
 
-        is_live = case.get("is_live", False)
+            incremental = self.economics.rank_incremental(case, probs, uncertainty, self.risk_z)
+            rec = self.agent.decide(case, probs)
+            rec_action = rec["action"]
+
+            # Abstain when the best non-WAIT action is not robustly positive.
+            candidates = {a: v for a, v in incremental.items() if a in feasible}
+            best_action = max(candidates, key=candidates.get) if candidates else "ESCALATE"
+            best_value = candidates.get(best_action, float("-inf"))
+            if best_action != "WAIT" and best_value <= 0:
+                best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
+            if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
+                best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
 
         if is_live:
             execution = self._execute_live(case, best_action, feasible)
@@ -121,6 +153,8 @@ class RecoveryPipeline:
             "execution_intent_id": intent_id,
             "approval_id": approval_id,
             "authorization": authorization.__dict__ if authorization else None,
+            "distribution_shift_flagged": distribution_shift_flagged,
+            "drift_details": drift_details,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **versions(),
         }
