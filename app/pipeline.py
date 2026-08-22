@@ -1,7 +1,10 @@
+import logging
 from datetime import datetime, timezone
 from app.agents.recovery_agent import RecoveryAgent
 from app.policy.gate import PolicyGate
 from app.execution.simulator import SubscriptionSimulator
+from app.execution.live_executor import LiveExecutor
+from app.execution.razorpay import RazorpayAPIError
 from app.audit.logger import AuditLogger
 from app.economics import EconomicsEngine, MerchantConfig
 from app.decision.versioning import versions
@@ -11,6 +14,8 @@ from app.execution.outbox import enqueue_execution_intent
 from app.execution.circuit_breaker import CircuitBreaker
 from app.db import init_db
 from app.approval import create_approval_request
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryPipeline:
@@ -26,6 +31,7 @@ class RecoveryPipeline:
         self.risk_mode = self.merchant_config.risk_mode
         self.risk_z = {"CONSERVATIVE": 2.0, "BALANCED": 1.0, "AGGRESSIVE": 0.0}.get(risk_mode, 1.0)
         self.circuit_breaker = CircuitBreaker()
+        self.live_executor = LiveExecutor()
         self.decision_store = decision_store or DecisionStore()
 
     def _predictions(self, case: dict, source: str):
@@ -57,7 +63,16 @@ class RecoveryPipeline:
         if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
             best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
 
-        execution = self.simulator.execute(case, best_action)
+        is_live = case.get("is_live", False)
+
+        if is_live:
+            execution = self._execute_live(case, best_action, feasible)
+            # Update best_action if _execute_live downgraded it (e.g. missing creds)
+            best_action = execution.action
+        else:
+            # --- Synthetic benchmark path (byte-for-byte identical to pre-diff) ---
+            execution = self.simulator.execute(case, best_action)
+
         if best_action == "MANUAL_RECOVERY":
             self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
 
@@ -67,8 +82,11 @@ class RecoveryPipeline:
             authorization = ExecutionAuthorization.create(case["event_id"], best_action, versions()["policy_version"], versions()["model_version"])
             intent_id = enqueue_execution_intent(authorization, {"case": case, "authorization": authorization.__dict__})
 
-        wait_exec = self.simulator.execute(case, "WAIT") if best_action != "WAIT" else None
-        wait_net = (wait_exec.recovered_amount - wait_exec.cost) if wait_exec else 0.0
+        if is_live:
+            wait_net = 0.0  # No simulator counterfactual for live cases
+        else:
+            wait_exec = self.simulator.execute(case, "WAIT") if best_action != "WAIT" else None
+            wait_net = (wait_exec.recovered_amount - wait_exec.cost) if wait_exec else 0.0
         net = execution.recovered_amount - execution.cost
 
         approval_id = None
@@ -111,3 +129,54 @@ class RecoveryPipeline:
         self.decision_store.save(decision)
         self.audit.log(decision)
         return decision
+
+    def _execute_live(self, case: dict, best_action: str, feasible: list) -> "ExecutionResult":
+        """Execute a live (webhook-driven) case through real Razorpay API.
+
+        Fail-closed behavior:
+        - Missing credentials → ESCALATE
+        - NotImplementedError (e.g. NUDGE not wired) → WAIT
+        - RazorpayAPIError → ESCALATE
+        """
+        from app.execution.simulator import ExecutionResult
+
+        if not self.live_executor.credentials_available:
+            logger.error(
+                "[LIVE] Razorpay credentials missing for case %s — "
+                "failing closed to ESCALATE (not falling back to simulator)",
+                case.get("event_id"),
+            )
+            return ExecutionResult(
+                success=False, recovered_amount=0.0, cost=10.0,
+                action="ESCALATE",
+                detail="live: credentials missing, failed closed to ESCALATE",
+                probability=0.0, time_to_recovery=0.0,
+            )
+
+        try:
+            return self.live_executor.execute(case, best_action)
+        except NotImplementedError as exc:
+            logger.warning(
+                "[LIVE] Action %s not wired for live execution (%s) — "
+                "falling back to WAIT for case %s",
+                best_action, exc, case.get("event_id"),
+            )
+            fallback = "WAIT" if "WAIT" in feasible else "ESCALATE"
+            return ExecutionResult(
+                success=False, recovered_amount=0.0, cost=0.0,
+                action=fallback,
+                detail=f"live: {best_action} not yet wired, fell back to {fallback}",
+                probability=0.0, time_to_recovery=0.0,
+            )
+        except RazorpayAPIError as exc:
+            logger.error(
+                "[LIVE] Razorpay API error for case %s action %s: %s — "
+                "failing closed to ESCALATE",
+                case.get("event_id"), best_action, exc,
+            )
+            return ExecutionResult(
+                success=False, recovered_amount=0.0, cost=10.0,
+                action="ESCALATE",
+                detail=f"live: Razorpay API error, failed closed to ESCALATE: {exc}",
+                probability=0.0, time_to_recovery=0.0,
+            )

@@ -36,6 +36,7 @@ def build_case(payload: dict) -> dict:
         'payment_method_type': 'unknown',
         'invoice_status': 'unknown',
         'native_retry_scheduled': status == 'pending',
+        'is_live': True,
     }
 
 

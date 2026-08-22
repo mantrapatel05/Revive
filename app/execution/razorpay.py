@@ -54,3 +54,25 @@ class RazorpayAdapter:
 
     def fetch_invoice(self, invoice_id):
         return self._request('GET', f'/invoices/{invoice_id}')
+
+    def create_payment_link(self, amount_paise, description, customer=None, expire_by=None):
+        """Create a Razorpay Payment Link (works in Test Mode).
+
+        Judgment call: Using Payment Links API because Razorpay Test Mode does not
+        support programmatic payment retries on subscriptions. This is the closest
+        real money-adjacent action available. Amount is in paise (INR × 100).
+        """
+        payload = {
+            'amount': int(amount_paise),
+            'currency': 'INR',
+            'description': description,
+            'accept_partial': False,
+        }
+        if customer:
+            payload['customer'] = customer
+        if expire_by:
+            payload['expire_by'] = int(expire_by)
+        return self._request('POST', '/payment_links', json=payload)
+
+    def fetch_payment_link(self, link_id):
+        return self._request('GET', f'/payment_links/{link_id}')
