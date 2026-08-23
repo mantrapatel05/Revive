@@ -65,7 +65,8 @@ class RecoveryAgent:
     def llm(self, case: dict, probabilities: dict[str,float], incremental_values: dict[str,float]) -> dict | None:
         prompt = {
             "role":"payment_recovery_decision_assistant",
-            "rules":["Choose exactly one action from WAIT, NUDGE, MANUAL_RECOVERY, ESCALATE.","Do not invent facts.","Never override policy constraints.","Treat WAIT as the default baseline; intervene only when there is clear incremental value."],
+            "instructions":"Analyze the payment failure case and return a JSON object with: 'action' (one of WAIT, NUDGE, MANUAL_RECOVERY, ESCALATE), 'reason' (clear justification), 'reason_codes' (list of tags), and 'confidence' (float between 0 and 1).",
+            "rules":["Choose exactly one action from WAIT, NUDGE, MANUAL_RECOVERY, ESCALATE.","Do not invent facts.","Never override policy constraints.","Treat WAIT as the default baseline; intervene only when there is clear positive incremental value."],
             "case":case,
             "recovery_probabilities":probabilities,
             "incremental_expected_values":incremental_values,
