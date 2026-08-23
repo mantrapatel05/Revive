@@ -77,6 +77,10 @@ def main():
     output={'seeds':SEEDS,'case_count':len(cases),'summary':summary,'safe_policy_capture':float(capture),'mean_decision_regret':float(np.mean([runs[s]['mean_decision_regret'] for s in runs])),'mean_policy_avoided_upside':float(np.mean([runs[s]['policy_avoided_upside'] for s in runs])),'risk_mode':'BALANCED'}
     RESULTS_DIR.mkdir(parents=True,exist_ok=True); (RESULTS_DIR/'final_results.json').write_text(json.dumps(output,indent=2))
     print('REVIVE 6.0 EXPECTED-VALUE EVALUATION')
-    for k,v in summary.items(): print(f'{k:20s} expected ₹{v["mean_expected_net"]:,.2f} ± ₹{v["std_expected_net"]:,.2f} | realized ₹{v["mean_realized_net"]:,.2f}')
+    for k,v in summary.items():
+        try:
+            print(f'{k:20s} expected ₹{v["mean_expected_net"]:,.2f} ± ₹{v["std_expected_net"]:,.2f} | realized ₹{v["mean_realized_net"]:,.2f}')
+        except UnicodeEncodeError:
+            print(f'{k:20s} expected INR {v["mean_expected_net"]:,.2f} +/- INR {v["std_expected_net"]:,.2f} | realized INR {v["mean_realized_net"]:,.2f}')
     print(f'Safe Policy Capture: {capture*100:.2f}%')
 if __name__=='__main__': main()
