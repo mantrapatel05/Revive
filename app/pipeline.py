@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class RecoveryPipeline:
+    RISK_MODES = {"CONSERVATIVE": 2.0, "BALANCED": 1.0, "AGGRESSIVE": 0.0}
+
     def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode="BALANCED", merchant_config=None, decision_store=None, drift_detector=None):
         init_db()
         self.model = model

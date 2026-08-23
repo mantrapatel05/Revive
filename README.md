@@ -2,7 +2,7 @@
 
 ## System Overview
 
-REVIVE 6.0 is an ente   rprise-grade revenue recovery decision engine designed for recurring subscription payments on payment gateways (specifically Razorpay). In high-volume subscription commerce, payment failures are typically handled by static cron-based retry schedules or aggressive blanket notifications. Both approaches introduce severe operational inefficiencies: blanket retries incur unnecessary transaction processing and SMS/notification costs, while premature manual outreach creates customer contact fatigue and elevates churn risk.
+REVIVE 6.0 is an enterprise-grade revenue recovery decision engine designed for recurring subscription payments on payment gateways (specifically Razorpay). In high-volume subscription commerce, payment failures are typically handled by static cron-based retry schedules or aggressive blanket notifications. Both approaches introduce severe operational inefficiencies: blanket retries incur unnecessary transaction processing and SMS/notification costs, while premature manual outreach creates customer contact fatigue and elevates churn risk.
 
 REVIVE formulates subscription recovery as a constrained causal decision problem. Rather than estimating absolute recovery probability, the engine models **incremental recovery uplift** over the payment gateway's native retry trajectory (`WAIT`). Every intervention is evaluated under bootstrap uncertainty quantification, subjected to non-negotiable deterministic safety policies, and executed through an idempotent, fail-closed outbox subsystem.
 

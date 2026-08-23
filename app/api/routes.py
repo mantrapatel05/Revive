@@ -25,6 +25,7 @@ def audit(request: Request, limit: int = 50):
 async def run_case(request: Request):
     body = await request.json()
     event_id = body.get('event_id')
+    risk_mode = str(body.get('risk_mode', 'BALANCED')).upper()
     if not event_id:
         raise HTTPException(400, 'event_id required')
     p = DATA_DIR / 'eval_cases.csv'
@@ -34,7 +35,12 @@ async def run_case(request: Request):
     row = df[df.event_id == event_id]
     if row.empty:
         raise HTTPException(404, 'case not found')
-    return request.app.state.pipeline.process(row.iloc[0].to_dict())
+    case = row.iloc[0].to_dict()
+    pipe = request.app.state.pipeline
+    if risk_mode in pipe.RISK_MODES:
+        pipe.risk_mode = risk_mode
+        pipe.risk_z = pipe.RISK_MODES[risk_mode]
+    return pipe.process(case)
 
 @router.get('/api/random-case')
 def random_case():
