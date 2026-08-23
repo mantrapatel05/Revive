@@ -81,16 +81,8 @@ def test_stale_authorization_rejected():
     assert stale_auth.is_valid(POLICY_VERSION, MODEL_VERSION) is False
 
 
-@pytest.mark.xfail(
-    reason="GAP: No runtime pipeline or outbox execution gate verifies ExecutionAuthorization validity/version matching before executing",
-    strict=True,
-)
 def test_model_policy_version_mismatch_blocked():
-    """Verify that an authorization with a mismatched model or policy version blocks execution.
-
-    Currently, while ExecutionAuthorization.is_valid() correctly returns False on mismatch,
-    the pipeline and execution workers do not check authorization validity prior to execution.
-    """
+    """Verify that an authorization with a mismatched model or policy version blocks execution."""
     from app.pipeline import RecoveryPipeline
 
     pipeline = RecoveryPipeline()

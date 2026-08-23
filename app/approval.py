@@ -7,7 +7,7 @@ def create_approval_request(case_id: str, amount: float, reason: str, payload: D
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO approval_queue(case_id, amount, reason, payload_json, status, created_at) VALUES(?,?,?,?,?,?)",
-            (case_id, float(amount), reason, __import__('json').dumps(payload or {}), "PENDING", datetime.now(timezone.utc).isoformat()),
+            (case_id, float(amount), reason, __import__('json').dumps(payload or {}, default=str), "PENDING", datetime.now(timezone.utc).isoformat()),
         )
         return int(cur.lastrowid)
 

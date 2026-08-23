@@ -50,7 +50,75 @@ class RecoveryPipeline:
         distribution_shift_flagged = False
         drift_details = None
 
-        # Check distribution shift on live cases before model scoring
+        # 1. Inbound Authorization Gate: verify version & TTL validity if inbound auth is provided
+        inbound_auth = case.get("authorization")
+        if inbound_auth is not None:
+            curr_v = versions()
+            auth_valid = False
+            if hasattr(inbound_auth, "is_valid"):
+                auth_valid = inbound_auth.is_valid(curr_v["policy_version"], curr_v["model_version"])
+            elif isinstance(inbound_auth, dict):
+                exp = inbound_auth.get("expires_at")
+                if isinstance(exp, str):
+                    try:
+                        exp = datetime.fromisoformat(exp)
+                    except Exception:
+                        exp = None
+                auth_valid = (
+                    bool(inbound_auth.get("authorized", False))
+                    and (exp is not None and exp > datetime.now(timezone.utc))
+                    and inbound_auth.get("policy_version") == curr_v["policy_version"]
+                    and inbound_auth.get("model_version") == curr_v["model_version"]
+                )
+            if not auth_valid:
+                logger.warning(
+                    "[AUTH] Inbound authorization invalid or version mismatched for case %s — blocking execution to ESCALATE",
+                    case.get("event_id"),
+                )
+                probs = {a: 0.0 for a in ["WAIT", "NUDGE", "MANUAL_RECOVERY", "ESCALATE"]}
+                uncertainty = {a: 0.0 for a in probs}
+                incremental = {"WAIT": 0.0, "NUDGE": 0.0, "MANUAL_RECOVERY": 0.0, "ESCALATE": -self.economics.action_cost(case, "ESCALATE")}
+                feasibility = self.policy.feasible(case, {a: {"mean": 0.0, "std": 0.0} for a in probs}, False)
+                decision = {
+                    "event_id": case["event_id"],
+                    "case_id": case["event_id"],
+                    "amount": float(case.get("amount", 0.0)),
+                    "state": case.get("subscription_status"),
+                    "recommended_action": "ESCALATE",
+                    "recommendation_source": "authorization_guard",
+                    "recommendation_reason": "Inbound authorization expired or policy/model version mismatched",
+                    "probabilities": probs,
+                    "uncertainty": uncertainty,
+                    "risk_mode": self.risk_mode,
+                    "incremental_values": incremental,
+                    "feasible_actions": {a: r.decision for a, r in feasibility.items()},
+                    "chosen_action": "ESCALATE",
+                    "policy_action": "ESCALATE",
+                    "policy_decision": "BLOCKED",
+                    "policy_id": "AUTH-VER-001",
+                    "policy_reasons": ["Inbound authorization expired or policy/model version mismatched"],
+                    "policy_checks": [],
+                    "execution_status": "BLOCKED",
+                    "recovered_amount": 0.0,
+                    "intervention_cost": 10.0,
+                    "net_recovered": -10.0,
+                    "incremental_realized_value": -10.0,
+                    "time_to_recovery": 0.0,
+                    "execution_intent_id": None,
+                    "approval_id": create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "Authorization version mismatch", {"case": case}),
+                    "authorization": None,
+                    "distribution_shift_flagged": False,
+                    "drift_details": None,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    **versions(),
+                }
+                decision["decision_id"] = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": "ESCALATE"})[:20]
+                decision["features"] = {k: v.__dict__ if hasattr(v, "__dict__") else v for k, v in case.items()}
+                self.decision_store.save(decision)
+                self.audit.log(decision)
+                return decision
+
+        # 2. Check distribution shift on live cases before model scoring
         if is_live and self.drift_detector is not None:
             drift_res = self.drift_detector.detect_case_drift(case)
             if drift_res.get("drift_detected", False):
