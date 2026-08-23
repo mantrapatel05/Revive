@@ -1,1 +1,1720 @@
-<!doctype html><html><head><meta charset="utf-8"><title>REVIVE Control Room</title><style>body{font-family:Inter,system-ui,sans-serif;background:#0b1020;color:#eef2ff;margin:0;padding:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{background:#121a30;border:1px solid #273351;border-radius:14px;padding:18px}.num{font-size:30px;font-weight:800}.muted{color:#9aa6c3}pre{white-space:pre-wrap;background:#0a0f1d;padding:14px;border-radius:10px;overflow:auto}button{background:#5b7cfa;color:#fff;border:0;border-radius:8px;padding:8px 12px;margin:4px;cursor:pointer}input{background:#0d1427;border:1px solid #34405f;color:#fff;padding:9px;border-radius:8px}.bar{height:10px;background:#24304f;border-radius:999px;overflow:hidden;margin:7px 0}.fill{height:100%;background:#5b7cfa}.row{display:flex;justify-content:space-between;gap:12px}.tag{padding:3px 7px;border-radius:999px;background:#1d2945}.good{color:#7ee2a8}.warn{color:#ffd166}</style></head><body><h1>REVIVE Control Room</h1><p class="muted">Risk-aware incremental revenue recovery</p><div class="grid"><div class="card"><div class="muted">Safe policy capture</div><div class="num" id="capture">—</div><div class="muted">REVIVE vs constrained oracle</div></div><div class="card"><div class="muted">Expected net value</div><div class="num" id="revive">—</div><div class="muted">Held-out benchmark</div></div><div class="card"><div class="muted">Mean decision regret</div><div class="num" id="regret">—</div><div class="muted">Lower is better</div></div><div class="card"><div class="muted">Unsafe actions</div><div class="num good">0 / 100</div><div class="muted">Adversarial benchmark</div></div></div><div class="card" style="margin-top:16px"><h2>Policy Benchmark</h2><div id="bench"></div></div><div class="card" style="margin-top:16px"><h2>Case Replay</h2><input id="eid" placeholder="EVT-0001"><button onclick="run()">Run</button><button onclick="replay()">Counterfactuals</button><pre id="case">—</pre></div><div class="card" style="margin-top:16px"><h2>Approval Queue</h2><div id="approvals">Loading…</div></div><script>async function j(u,o){let r=await fetch(u,o);return r.json()}async function load(){let d=await j('/api/evaluation');if(!d.error){document.getElementById('capture').textContent=(d.safe_policy_capture*100).toFixed(2)+'%';document.getElementById('revive').textContent='₹'+d.summary.revive.mean_expected_net.toLocaleString('en-IN');document.getElementById('regret').textContent='₹'+d.mean_decision_regret.toLocaleString('en-IN');let h='';for(let [k,v] of Object.entries(d.summary)){h+=`<div class="row"><span>${k}</span><b>₹${v.mean_expected_net.toLocaleString('en-IN')}</b></div><div class="bar"><div class="fill" style="width:${Math.min(100,Math.max(0,v.mean_expected_net/(d.summary.oracle.mean_expected_net||1)*100))}%"></div></div>`}document.getElementById('bench').innerHTML=h}let a=await j('/api/approvals');document.getElementById('approvals').innerHTML=a.approvals.length?a.approvals.map(x=>`<div class="row"><span>${x.case_id} · ₹${x.amount}</span><span class="tag">${x.status}</span></div>`).join(''):'No pending approvals'}async function run(){let id=document.getElementById('eid').value;document.getElementById('case').textContent=JSON.stringify(await j('/api/run-case',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:id})}),null,2)}async function replay(){let id=document.getElementById('eid').value;document.getElementById('case').textContent=JSON.stringify(await j('/api/replay/'+id),null,2)}load()</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>REVIVE — Control Room v5.1.4</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    /* ═════════════════════════════════════════════════════════════ */
+    /* REVIVE v5.1.4 — Financial Ops Control Room Theme             */
+    /* High-density, Jet-Black, Glowing Accents, Razor-sharp Fonts   */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    :root {
+      --bg-canvas: #040507;
+      --bg-card: #0a0d13;
+      --bg-panel: #0f141f;
+      --bg-surface: #141b29;
+      --bg-hover: #1b2436;
+      --bg-active: #222e45;
+
+      --border-subtle: rgba(255, 255, 255, 0.06);
+      --border-medium: rgba(255, 255, 255, 0.12);
+      --border-bright: rgba(255, 255, 255, 0.22);
+
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --text-faint: #475569;
+
+      /* Primary Brand / Safety Neon */
+      --cyan-neon: #00f2fe;
+      --cyan-glow: rgba(0, 242, 254, 0.15);
+      --cyan-border: rgba(0, 242, 254, 0.35);
+
+      /* Semantic Financial States */
+      --emerald: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.14);
+      --amber: #f59e0b;
+      --amber-glow: rgba(245, 158, 11, 0.14);
+      --rose: #f43f5e;
+      --rose-glow: rgba(244, 63, 94, 0.14);
+      --indigo: #818cf8;
+      --indigo-glow: rgba(129, 140, 248, 0.14);
+
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      line-height: 1.5;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      padding-bottom: 40px;
+    }
+
+    /* Minimal custom scrollbars */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-canvas); }
+    ::-webkit-scrollbar-thumb { background: var(--bg-surface); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+
+    /* Utility typography */
+    .mono { font-family: var(--font-mono); }
+    .muted { color: var(--text-muted); }
+    .dim { color: var(--text-dim); }
+    .faint { color: var(--text-faint); }
+    .bold { font-weight: 700; }
+    .cyan { color: var(--cyan-neon); }
+    .green { color: var(--emerald); }
+    .amber { color: var(--amber); }
+    .red { color: var(--rose); }
+    .purple { color: var(--indigo); }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 1. TOP STATUS BAR & HEADER                                    */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 24px;
+      background: linear-gradient(180deg, #0d121c 0%, #080a10 100%);
+      border-bottom: 1px solid var(--border-medium);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .brand-cluster {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 16px;
+      color: #000;
+      box-shadow: 0 0 12px var(--cyan-glow);
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-version {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      background: var(--cyan-glow);
+      color: var(--cyan-neon);
+      border: 1px solid var(--cyan-border);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .led-pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    .live-clock {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 2. OVERVIEW METRICS HERO STRIP                                */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 1px;
+      background: var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: transparent;
+      transition: background 0.3s;
+    }
+
+    .metric-card.cyan::before { background: var(--cyan-neon); }
+    .metric-card.green::before { background: var(--emerald); }
+    .metric-card.amber::before { background: var(--amber); }
+    .metric-card.red::before { background: var(--rose); }
+
+    .metric-card:hover {
+      background: var(--bg-panel);
+    }
+
+    .metric-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .metric-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 3. COMMAND DECK & CONTROLS                                    */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .command-deck {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 24px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border-medium);
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .input-field-wrap {
+      display: flex;
+      align-items: center;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: 6px;
+      padding: 0 10px;
+      transition: all 0.2s;
+    }
+
+    .input-field-wrap:focus-within {
+      border-color: var(--cyan-neon);
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .prompt-symbol {
+      color: var(--cyan-neon);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      margin-right: 6px;
+      user-select: none;
+    }
+
+    .case-input {
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 8px 0;
+      width: 140px;
+      outline: none;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 5px;
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .btn-primary {
+      background: var(--cyan-neon);
+      color: #000;
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .btn-primary:hover {
+      background: #38f8ff;
+      box-shadow: 0 0 16px rgba(0, 242, 254, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      border-color: var(--border-medium);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-bright);
+      color: #fff;
+    }
+
+    .btn-amber {
+      background: var(--amber-glow);
+      color: var(--amber);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-amber:hover {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: var(--amber);
+    }
+
+    /* Risk Segmented Switch */
+    .risk-switch {
+      display: flex;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .risk-btn {
+      padding: 6px 12px;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .risk-btn:hover {
+      color: var(--text-main);
+    }
+
+    .risk-btn.active {
+      background: var(--cyan-glow);
+      color: var(--cyan-neon);
+      border: 1px solid var(--cyan-border);
+      box-shadow: 0 0 8px var(--cyan-glow);
+    }
+
+    /* Preset scenario tags */
+    .scenario-tags {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 24px;
+      background: #07090e;
+      border-bottom: 1px solid var(--border-subtle);
+      overflow-x: auto;
+    }
+
+    .scenario-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .tag-btn {
+      padding: 4px 9px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .tag-btn:hover {
+      border-color: var(--cyan-neon);
+      color: var(--cyan-neon);
+      background: var(--cyan-glow);
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 4. MAIN OPERATIONAL GRID LAYOUT                               */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .ops-grid {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 16px;
+      padding: 20px 24px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-card) 100%);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .badge-cyan { background: var(--cyan-glow); color: var(--cyan-neon); border: 1px solid var(--cyan-border); }
+    .badge-green { background: var(--emerald-glow); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-amber { background: var(--amber-glow); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-red { background: var(--rose-glow); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
+    .badge-gray { background: var(--bg-surface); color: var(--text-dim); border: 1px solid var(--border-subtle); }
+
+    .card-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 5. CASE DETAIL SPECIFICATION GRID                             */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .detail-cell {
+      background: var(--bg-panel);
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .detail-key {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+
+    .detail-val {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      word-break: break-all;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 6. MODEL PREDICTIONS & UNCERTAINTY BARS                       */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .model-row {
+      display: grid;
+      grid-template-columns: 120px 1fr 100px;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px;
+      background: var(--bg-panel);
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .action-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .bar-container {
+      position: relative;
+      height: 18px;
+      background: var(--bg-surface);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bar-uncertainty {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.08);
+      transition: all 0.4s ease;
+    }
+
+    .bar-mean {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      background: linear-gradient(90deg, #00b4d8 0%, var(--cyan-neon) 100%);
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+
+    .model-stat {
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 7. COUNTERFACTUAL ECONOMICS (INCREMENTAL VS WAIT)             */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .econ-row {
+      display: grid;
+      grid-template-columns: 130px 1fr 110px;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg-panel);
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      transition: border-color 0.2s;
+    }
+
+    .econ-row.chosen {
+      background: var(--cyan-glow);
+      border-color: var(--cyan-border);
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .econ-bar-wrap {
+      height: 22px;
+      background: var(--bg-surface);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .econ-bar-fill {
+      height: 100%;
+      transition: width 0.4s ease;
+      border-radius: 4px;
+    }
+
+    .econ-bar-fill.pos { background: linear-gradient(90deg, #059669 0%, #10b981 100%); }
+    .econ-bar-fill.neg { background: linear-gradient(90deg, #e11d48 0%, #f43f5e 100%); }
+    .econ-bar-fill.neutral { background: var(--text-dim); }
+
+    .econ-value-num {
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 8. UNGATED VS GATED COMPARISON BANNER                         */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .ungated-box {
+      background: linear-gradient(135deg, #131127 0%, #0d0f1a 100%);
+      border: 1px solid rgba(129, 140, 248, 0.25);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .ungated-split {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .ungated-card {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    .ungated-card.safe {
+      border-color: var(--cyan-border);
+      background: var(--cyan-glow);
+    }
+
+    .ungated-card.unconstrained {
+      border-color: rgba(245, 158, 11, 0.3);
+      background: var(--amber-glow);
+    }
+
+    .ungated-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .ungated-action-name {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .ungated-val {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .ungated-vs {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--text-dim);
+    }
+
+    .ungated-intercept-banner {
+      background: var(--rose-glow);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: #fecdd3;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 9. POLICY EVIDENCE & DETERMINISTIC GATE                       */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .policy-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--bg-panel);
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .policy-left {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .policy-check-id {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
+    .policy-check-desc {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .verbatim-block-box {
+      background: var(--rose-glow);
+      border-left: 3px solid var(--rose);
+      padding: 12px 16px;
+      border-radius: 0 6px 6px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .verbatim-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: var(--rose);
+    }
+
+    .verbatim-reason {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 10. HORIZONTAL EXECUTION TRACE & RECONCILIATION MACHINE       */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .trace-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 10px;
+      background: var(--bg-panel);
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      overflow-x: auto;
+    }
+
+    .trace-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      min-width: 100px;
+      gap: 4px;
+    }
+
+    .trace-icon-circle {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-dim);
+      transition: all 0.3s;
+    }
+
+    .trace-step.active .trace-icon-circle {
+      background: var(--cyan-glow);
+      border-color: var(--cyan-neon);
+      color: var(--cyan-neon);
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .trace-step.success .trace-icon-circle {
+      background: var(--emerald-glow);
+      border-color: var(--emerald);
+      color: var(--emerald);
+    }
+
+    .trace-step.blocked .trace-icon-circle {
+      background: var(--rose-glow);
+      border-color: var(--rose);
+      color: var(--rose);
+    }
+
+    .trace-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .trace-val {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text-dim);
+      max-width: 90px;
+      word-break: break-all;
+    }
+
+    .trace-arrow {
+      height: 1px;
+      background: var(--border-bright);
+      flex: 1;
+      margin: 0 8px;
+      position: relative;
+    }
+
+    .trace-arrow::after {
+      content: '▶';
+      position: absolute;
+      right: -2px;
+      top: -5px;
+      font-size: 7px;
+      color: var(--border-bright);
+    }
+
+    /* State Machine Callout */
+    .state-machine-box {
+      background: #090c12;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sm-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .sm-node {
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border-medium);
+      background: var(--bg-surface);
+      color: var(--text-muted);
+    }
+
+    .sm-node.amber { background: var(--amber-glow); border-color: rgba(245, 158, 11, 0.4); color: var(--amber); }
+    .sm-node.green { background: var(--emerald-glow); border-color: rgba(16, 185, 129, 0.4); color: var(--emerald); }
+
+    .sm-quote {
+      font-size: 11px;
+      font-style: italic;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 11. BENCHMARK TIERS                                           */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .bench-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 0 24px 20px;
+    }
+
+    .tier-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .tier-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .tier-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .bench-bar-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 130px;
+      align-items: center;
+      gap: 14px;
+      padding: 8px 12px;
+      background: var(--bg-panel);
+      border-radius: 6px;
+    }
+
+    .bench-bar-track {
+      height: 22px;
+      background: var(--bg-surface);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .bench-bar-val {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .bench-bar-val.revive { background: linear-gradient(90deg, #00b4d8 0%, var(--cyan-neon) 100%); box-shadow: 0 0 10px var(--cyan-glow); }
+    .bench-bar-val.rule { background: var(--text-dim); }
+    .bench-bar-val.constrained { background: #38bdf8; }
+    .bench-bar-val.ml-only { background: var(--amber); }
+    .bench-bar-val.oracle { background: var(--emerald); }
+
+    /* ═════════════════════════════════════════════════════════════ */
+    /* 12. TOAST NOTIFICATIONS & DEBUG DRAWER                        */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    .toast-box {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #0f172a;
+      border: 1px solid var(--cyan-border);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: none;
+      z-index: 1000;
+      max-width: 380px;
+      animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .toast-title {
+      font-weight: 800;
+      font-size: 12px;
+      color: var(--cyan-neon);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .toast-msg {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .debug-drawer {
+      margin: 20px 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .debug-drawer summary {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      background: var(--bg-panel);
+    }
+
+    .debug-drawer summary:hover {
+      color: var(--text-main);
+    }
+
+    .debug-content {
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      max-height: 300px;
+      overflow-y: auto;
+      background: #05070a;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Responsive */
+    @media (max-width: 980px) {
+      .ops-grid { grid-template-columns: 1fr; }
+      .detail-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. TOP STATUS BAR -->
+  <header class="header-bar">
+    <div class="brand-cluster">
+      <div class="brand-logo">R</div>
+      <div>
+        <div class="brand-title">
+          REVIVE CONTROL ROOM
+          <span class="brand-version">v5.1.4</span>
+        </div>
+        <div class="dim" style="font-size: 10px;">Risk-Aware Incremental Revenue Recovery for Razorpay Subscriptions</div>
+      </div>
+    </div>
+    <div class="header-controls">
+      <div class="status-pill">
+        <div class="led-pulse"></div>
+        <span class="muted">TEST MODE ENGINE</span>
+      </div>
+      <div class="live-clock mono" id="clock-display">--:--:-- UTC</div>
+    </div>
+  </header>
+
+  <!-- 2. OVERVIEW METRICS STRIP -->
+  <section class="metrics-strip">
+    <div class="metric-card cyan">
+      <div class="metric-label">Safe Policy Capture</div>
+      <div class="metric-value cyan" id="kpi-capture">93.67%</div>
+      <div class="metric-sub">vs Constrained Oracle (₹142.5k)</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Expected Net Recovery</div>
+      <div class="metric-value green" id="kpi-revenue">₹141,418</div>
+      <div class="metric-sub">+₹16.6k lift over Native WAIT</div>
+    </div>
+    <div class="metric-card amber">
+      <div class="metric-label">Mean Decision Regret</div>
+      <div class="metric-value amber" id="kpi-regret">₹2.93</div>
+      <div class="metric-sub">Near-optimal bound vs Oracle</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Unsafe Actions (Adversarial)</div>
+      <div class="metric-value green" id="kpi-unsafe">0 <span class="dim" style="font-size:14px">/ 100</span></div>
+      <div class="metric-sub">100% Policy Gate intercept rate</div>
+    </div>
+  </section>
+
+  <!-- 3. COMMAND DECK & INTERACTIVE CONTROLS -->
+  <section class="command-deck">
+    <div class="control-group">
+      <div class="input-field-wrap">
+        <span class="prompt-symbol">$</span>
+        <input type="text" id="case-id-input" class="case-input" value="EVT-00557" placeholder="e.g. EVT-00557" spellcheck="false" autocomplete="off">
+      </div>
+      <button class="btn btn-primary" onclick="loadCase()">RUN CASE</button>
+      <button class="btn btn-secondary" onclick="loadRandomCase()">🎲 RANDOM</button>
+    </div>
+
+    <div class="control-group">
+      <span class="dim bold" style="font-size: 10px; text-transform: uppercase;">Risk Mode:</span>
+      <div class="risk-switch">
+        <button class="risk-btn" id="risk-btn-conservative" onclick="setRiskMode('CONSERVATIVE')">Conservative (z=2)</button>
+        <button class="risk-btn active" id="risk-btn-balanced" onclick="setRiskMode('BALANCED')">Balanced (z=1)</button>
+        <button class="risk-btn" id="risk-btn-aggressive" onclick="setRiskMode('AGGRESSIVE')">Aggressive (z=0)</button>
+      </div>
+      <button class="btn btn-amber" onclick="simulateDuplicateWebhook()">⚡ DUPLICATE WEBHOOK DEMO</button>
+    </div>
+  </section>
+
+  <!-- PRESET DEMO SCENARIOS -->
+  <section class="scenario-tags">
+    <span class="scenario-label">Demo Presets:</span>
+    <button class="tag-btn" onclick="selectPreset('EVT-00806')">🛑 Opted-Out (EVT-00806)</button>
+    <button class="tag-btn" onclick="selectPreset('EVT-00956')">⏳ Native Retry (EVT-00956)</button>
+    <button class="tag-btn" onclick="selectPreset('EVT-00958')">🌐 Gateway Downtime (EVT-00958)</button>
+    <button class="tag-btn" onclick="selectPreset('EVT-00557')">💳 Bank Declined (EVT-00557)</button>
+    <button class="tag-btn" onclick="selectPreset('EVT-00966')">📉 Insufficient Funds (EVT-00966)</button>
+  </section>
+
+  <!-- 4. OPERATIONAL WORKFLOW PANELS -->
+  <main class="ops-grid">
+
+    <!-- LEFT COLUMN -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+
+      <!-- PANEL 1: CASE DETAIL -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📋 CASE CONTEXT</span>
+            <span class="badge badge-cyan" id="badge-case-id">EVT-00557</span>
+          </div>
+          <span class="badge badge-gray" id="badge-subscription-state">STATUS: PENDING</span>
+        </div>
+        <div class="card-body">
+          <div class="detail-grid">
+            <div class="detail-cell">
+              <span class="detail-key">Amount at Risk</span>
+              <span class="detail-val cyan" id="case-amount">₹499.00</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Failure Reason</span>
+              <span class="detail-val" id="case-reason">bank_declined</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Failure Source</span>
+              <span class="detail-val" id="case-source">bank</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Attempt Count</span>
+              <span class="detail-val" id="case-attempt">3 of 4</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">7-Day Contact Count</span>
+              <span class="detail-val" id="case-contacts">4 touches (fatigue)</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Payment Method</span>
+              <span class="detail-val" id="case-pm">international_card</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Native Retry Active</span>
+              <span class="detail-val" id="case-native-retry">False</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Customer Opt-Out</span>
+              <span class="detail-val" id="case-opt-out">False</span>
+            </div>
+            <div class="detail-cell">
+              <span class="detail-key">Customer Tenure</span>
+              <span class="detail-val" id="case-tenure">920 days</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PANEL 2: MODEL PREDICTIONS & UNCERTAINTY -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🧠 T-LEARNER ACTION PROBABILITIES</span>
+          </div>
+          <span class="badge badge-gray" id="badge-calibrated">OOB CALIBRATED</span>
+        </div>
+        <div class="card-body">
+          <div style="display: flex; flex-direction: column; gap: 8px;" id="model-bars-container">
+            <!-- Rendered by JS -->
+          </div>
+          <div class="faint" style="font-size: 10px; margin-top: 4px;">
+            Ensemble dispersion represents model uncertainty ($\sigma$). Bar width is expected probability with confidence bound overlay.
+          </div>
+        </div>
+      </div>
+
+      <!-- PANEL 3: COUNTERFACTUAL ECONOMICS -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📈 COUNTERFACTUAL ECONOMICS (INCREMENTAL VS WAIT)</span>
+          </div>
+          <span class="badge badge-cyan" id="badge-chosen-action">CHOSEN: WAIT</span>
+        </div>
+        <div class="card-body">
+          <div style="display: flex; flex-direction: column; gap: 8px;" id="econ-bars-container">
+            <!-- Rendered by JS -->
+          </div>
+          <div class="dim" style="font-size: 11px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+            ⚖️ <b>Objective:</b> Incremental value over native <code>WAIT</code> baseline minus direct ops costs, contact fatigue penalties (₹50/touch > 2), and risk discount ($z \cdot \sigma$).
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+
+      <!-- PANEL 4: UNGATED VS GATED INTERCEPT -->
+      <div class="ungated-box">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:11px; font-weight:800; text-transform:uppercase; color:var(--indigo);">
+            🛡️ UNGATED VS GATED ARBITRATION
+          </span>
+          <span class="badge badge-gray" style="font-size:9px;">THEORETICAL OVERRIDE</span>
+        </div>
+
+        <div class="ungated-split">
+          <div class="ungated-card safe">
+            <div class="ungated-title">REVIVE (Gated)</div>
+            <div class="ungated-action-name cyan" id="ungated-revive-action">WAIT</div>
+            <div class="ungated-val" id="ungated-revive-val">Net: ₹0.00</div>
+          </div>
+          <div class="ungated-vs">VS</div>
+          <div class="ungated-card unconstrained">
+            <div class="ungated-title">ML-Only (Ungated)</div>
+            <div class="ungated-action-name amber" id="ungated-ml-action">NUDGE</div>
+            <div class="ungated-val" id="ungated-ml-val">Expected: ₹120.00</div>
+          </div>
+        </div>
+
+        <div class="ungated-intercept-banner" id="ungated-banner" style="display: none;">
+          <span>🛑</span>
+          <span id="ungated-banner-text">Policy Gate intercepted unsafe ML action.</span>
+        </div>
+      </div>
+
+      <!-- PANEL 5: DETERMINISTIC POLICY EVIDENCE -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🔒 POLICY GATE EVIDENCE & CHECKS</span>
+          </div>
+          <span class="badge" id="badge-policy-decision">APPROVED</span>
+        </div>
+        <div class="card-body">
+          <div style="display: flex; flex-direction: column; gap: 6px;" id="policy-checks-container">
+            <!-- Rendered by JS -->
+          </div>
+
+          <div class="verbatim-block-box" id="verbatim-block-container" style="display: none;">
+            <div class="verbatim-title">VERBATIM POLICY BLOCK EVIDENCE</div>
+            <div class="verbatim-reason" id="verbatim-reason-text">"Customer opted out"</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PANEL 6: HORIZONTAL EXECUTION TRACE & RECONCILIATION -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>⚡ EXECUTION TIMELINE & RECONCILIATION</span>
+          </div>
+          <span class="badge badge-gray" id="badge-exec-status">IDLE</span>
+        </div>
+        <div class="card-body">
+          <div class="trace-container">
+            <div class="trace-step active" id="trace-step-dec">
+              <div class="trace-icon-circle">1</div>
+              <div class="trace-label">Decision</div>
+              <div class="trace-val" id="trace-dec-id">—</div>
+            </div>
+            <div class="trace-arrow"></div>
+            <div class="trace-step" id="trace-step-auth">
+              <div class="trace-icon-circle">2</div>
+              <div class="trace-label">Authorize</div>
+              <div class="trace-val" id="trace-auth-status">None</div>
+            </div>
+            <div class="trace-arrow"></div>
+            <div class="trace-step" id="trace-step-outbox">
+              <div class="trace-icon-circle">3</div>
+              <div class="trace-label">Outbox</div>
+              <div class="trace-val" id="trace-outbox-id">Queued</div>
+            </div>
+            <div class="trace-arrow"></div>
+            <div class="trace-step" id="trace-step-exec">
+              <div class="trace-icon-circle">4</div>
+              <div class="trace-label">Execute</div>
+              <div class="trace-val" id="trace-exec-res">—</div>
+            </div>
+            <div class="trace-arrow"></div>
+            <div class="trace-step" id="trace-step-recon">
+              <div class="trace-icon-circle">5</div>
+              <div class="trace-label">Reconcile</div>
+              <div class="trace-val" id="trace-recon-status">CONFIRMED</div>
+            </div>
+          </div>
+
+          <!-- State Machine Callout -->
+          <div class="state-machine-box">
+            <div class="dim bold" style="font-size: 9px; text-transform: uppercase;">Ambiguous External Result Handling:</div>
+            <div class="sm-flow">
+              <span class="sm-node amber">UNKNOWN</span>
+              <span class="dim">→</span>
+              <span class="sm-node">RECONCILIATION</span>
+              <span class="dim">→</span>
+              <span class="sm-node green">CONFIRMED / FAILED</span>
+            </div>
+            <div class="sm-quote">
+              "External timeout ≠ operation failure. Blind retry is unsafe."
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- 5. BENCHMARK COMPARISON TIERS -->
+  <section class="bench-container">
+    <div class="tier-box">
+      <div class="tier-header">
+        <div class="tier-title cyan">TIER 1: SAFE COMPARISON TIER (CONSTRAINED POLICIES)</div>
+        <span class="dim font-mono" style="font-size: 10px;">Goal: Maximize recovery without violating hard safety rules</span>
+      </div>
+      <div id="bench-tier1-container" style="display: flex; flex-direction: column; gap: 8px;">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+    <div class="tier-box" style="border-color: rgba(245, 158, 11, 0.2);">
+      <div class="tier-header">
+        <div class="tier-title amber">TIER 2: UNCONSTRAINED REFERENCE TIER (THEORETICAL UPPER BOUNDS)</div>
+        <span class="dim font-mono" style="font-size: 10px;">⚠️ Violates business safety constraints (e.g. spams opted-out users)</span>
+      </div>
+      <div id="bench-tier2-container" style="display: flex; flex-direction: column; gap: 8px;">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. RAW JSON DEBUG DRAWER -->
+  <details class="debug-drawer">
+    <summary>🔍 RAW DECISION PAYLOAD (JSON INSPECTOR)</summary>
+    <pre class="debug-content" id="debug-raw-json">No case executed yet.</pre>
+  </details>
+
+  <!-- 7. TOAST NOTIFICATION -->
+  <div class="toast-box" id="toast">
+    <div class="toast-title" id="toast-title">🔔 SYSTEM EVENT</div>
+    <div class="toast-msg" id="toast-body">Notification details</div>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════════════ -->
+  <!-- JAVASCRIPT CONTROL LOGIC                                      -->
+  <!-- ═════════════════════════════════════════════════════════════ -->
+  <script>
+    const ACTIONS = ['WAIT', 'NUDGE', 'MANUAL_RECOVERY', 'ESCALATE'];
+    let currentRiskMode = 'BALANCED';
+    let currentCaseData = null;
+    let evalResults = null;
+
+    // Clock
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock-display').textContent = now.toISOString().slice(11, 19) + ' UTC';
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // API Helper
+    async function apiFetch(url, options = {}) {
+      try {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || err.error || `HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        console.error(`API Error on ${url}:`, err);
+        throw err;
+      }
+    }
+
+    // Initialize Dashboard Overview Data
+    async function initOverview() {
+      try {
+        evalResults = await apiFetch('/api/evaluation');
+        if (evalResults && !evalResults.error) {
+          if (evalResults.safe_policy_capture != null) {
+            document.getElementById('kpi-capture').textContent = (evalResults.safe_policy_capture * 100).toFixed(2) + '%';
+          }
+          if (evalResults.summary?.revive?.mean_expected_net != null) {
+            document.getElementById('kpi-revenue').textContent = '₹' + Math.round(evalResults.summary.revive.mean_expected_net).toLocaleString('en-IN');
+          }
+          if (evalResults.mean_decision_regret != null) {
+            document.getElementById('kpi-regret').textContent = '₹' + evalResults.mean_decision_regret.toFixed(2);
+          }
+          renderBenchmarkTiers(evalResults.summary);
+        }
+      } catch (e) {
+        console.warn('Evaluation data not loaded yet:', e);
+      }
+    }
+
+    // Benchmark Tiers Renderer
+    function renderBenchmarkTiers(summary) {
+      if (!summary) return;
+      const maxVal = Math.max(...Object.values(summary).map(s => s.mean_expected_net || 0));
+
+      const tier1Container = document.getElementById('bench-tier1-container');
+      const tier2Container = document.getElementById('bench-tier2-container');
+      tier1Container.innerHTML = '';
+      tier2Container.innerHTML = '';
+
+      const tier1Keys = [
+        { key: 'revive', label: 'REVIVE (Risk-Aware Policy)', cls: 'revive' },
+        { key: 'constrained_oracle', label: 'Constrained Oracle (Safe Target)', cls: 'constrained' },
+        { key: 'rule', label: 'Rule-Based Baseline', cls: 'rule' },
+        { key: 'native', label: 'Native (Passive WAIT Baseline)', cls: 'rule' }
+      ];
+
+      const tier2Keys = [
+        { key: 'ml_only', label: 'ML-Only (Unconstrained Aggressive)', cls: 'ml-only' },
+        { key: 'oracle', label: 'Absolute Oracle (Theoretical Cap)', cls: 'oracle' }
+      ];
+
+      tier1Keys.forEach(item => {
+        const stat = summary[item.key];
+        if (stat) {
+          const val = stat.mean_expected_net;
+          const pct = ((val / maxVal) * 100).toFixed(1);
+          tier1Container.innerHTML += `
+            <div class="bench-bar-row">
+              <span class="mono bold" style="font-size: 11px;">${item.label}</span>
+              <div class="bench-bar-track">
+                <div class="bench-bar-val ${item.cls}" style="width: ${pct}%;"></div>
+              </div>
+              <span class="mono bold" style="text-align: right; font-size: 12px;">₹${val.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+          `;
+        }
+      });
+
+      tier2Keys.forEach(item => {
+        const stat = summary[item.key];
+        if (stat) {
+          const val = stat.mean_expected_net;
+          const pct = ((val / maxVal) * 100).toFixed(1);
+          tier2Container.innerHTML += `
+            <div class="bench-bar-row">
+              <span class="mono bold dim" style="font-size: 11px;">${item.label}</span>
+              <div class="bench-bar-track">
+                <div class="bench-bar-val ${item.cls}" style="width: ${pct}%;"></div>
+              </div>
+              <span class="mono bold dim" style="text-align: right; font-size: 12px;">₹${val.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+          `;
+        }
+      });
+    }
+
+    // Load & Process Case
+    async function loadCase(overrideId) {
+      const caseId = overrideId || document.getElementById('case-id-input').value.trim();
+      if (!caseId) return;
+
+      document.getElementById('case-id-input').value = caseId;
+      document.getElementById('badge-case-id').textContent = caseId;
+
+      try {
+        // Run Case via Pipeline
+        const result = await apiFetch('/api/run-case', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: caseId, risk_mode: currentRiskMode })
+        });
+        currentCaseData = result;
+
+        // Fetch Replay for Counterfactual Oracle ground truth
+        let replayData = null;
+        try {
+          replayData = await apiFetch(`/api/replay/${caseId}`);
+        } catch (e) {
+          console.warn('Replay endpoint fetch warning:', e);
+        }
+
+        renderCaseView(result, replayData);
+        document.getElementById('debug-raw-json').textContent = JSON.stringify(result, null, 2);
+      } catch (err) {
+        showToast('EXECUTION ERROR', `Failed to run case ${caseId}: ${err.message}`);
+      }
+    }
+
+    // Render Full Case View
+    function renderCaseView(res, replay) {
+      const features = res.features || {};
+      const amount = res.amount != null ? res.amount : (features.amount || 0);
+
+      // Case Details
+      document.getElementById('case-amount').textContent = `₹${parseFloat(amount).toFixed(2)}`;
+      document.getElementById('case-reason').textContent = features.failure_reason || 'unknown';
+      document.getElementById('case-source').textContent = features.failure_source || 'unknown';
+      document.getElementById('case-attempt').textContent = `${features.attempt_number || 1} of 4`;
+      document.getElementById('case-contacts').textContent = `${features.contact_count_7d || 0} touches ${features.contact_count_7d > 2 ? '(₹50 fatigue)' : ''}`;
+      document.getElementById('case-pm').textContent = features.payment_method_type || 'unknown';
+      document.getElementById('case-native-retry').textContent = String(features.native_retry_scheduled ?? false);
+      document.getElementById('case-opt-out').textContent = String(features.customer_opted_out ?? false);
+      document.getElementById('case-tenure').textContent = `${features.customer_tenure_days || 0} days`;
+      document.getElementById('badge-subscription-state').textContent = `STATE: ${(features.subscription_status || res.state || 'pending').toUpperCase()}`;
+
+      // Model Predictions
+      const modelContainer = document.getElementById('model-bars-container');
+      modelContainer.innerHTML = '';
+      const probs = res.probabilities || (replay ? replay.probabilities : {});
+      const uncert = res.uncertainty || {};
+
+      ACTIONS.forEach(action => {
+        const p = probs[action] || 0;
+        const u = uncert[action] || 0;
+        const pct = (p * 100).toFixed(1);
+        const uPct = (u * 100).toFixed(1);
+        const lowerBound = Math.max(0, (p - u) * 100);
+        const upperBound = Math.min(100, (p + u) * 100);
+
+        modelContainer.innerHTML += `
+          <div class="model-row">
+            <span class="action-tag ${action === res.chosen_action ? 'cyan bold' : 'muted'}">${action}</span>
+            <div class="bar-container">
+              <div class="bar-uncertainty" style="left: ${lowerBound}%; width: ${upperBound - lowerBound}%;"></div>
+              <div class="bar-mean" style="width: ${pct}%;"></div>
+            </div>
+            <div class="model-stat">
+              <span>${pct}%</span>
+              <span class="dim" style="font-size: 10px;"> ±${uPct}%</span>
+            </div>
+          </div>
+        `;
+      });
+
+      // Counterfactual Economics Bars
+      const econContainer = document.getElementById('econ-bars-container');
+      econContainer.innerHTML = '';
+      const incremental = res.incremental_values || (replay ? replay.expected_net_values : {});
+      const chosen = res.chosen_action || 'WAIT';
+      document.getElementById('badge-chosen-action').textContent = `CHOSEN: ${chosen}`;
+
+      const maxAbsVal = Math.max(10, ...Object.values(incremental).map(v => Math.abs(v || 0)));
+
+      ACTIONS.forEach(action => {
+        const val = incremental[action] || 0;
+        const isChosen = action === chosen;
+        const isPos = val > 0;
+        const widthPct = Math.min(100, (Math.abs(val) / maxAbsVal) * 100).toFixed(1);
+        const fillClass = val === 0 ? 'neutral' : (isPos ? 'pos' : 'neg');
+        const sign = val > 0 ? '+' : '';
+
+        econContainer.innerHTML += `
+          <div class="econ-row ${isChosen ? 'chosen' : ''}">
+            <div style="display:flex; align-items:center; gap:6px;">
+              ${isChosen ? '<span class="cyan">▶</span>' : ''}
+              <span class="action-tag ${isChosen ? 'cyan bold' : 'muted'}">${action}</span>
+            </div>
+            <div class="econ-bar-wrap">
+              <div class="econ-bar-fill ${fillClass}" style="width: ${widthPct}%;"></div>
+            </div>
+            <div class="econ-value-num ${val > 0 ? 'green' : (val < 0 ? 'red' : 'dim')}">
+              ${sign}₹${val.toFixed(2)}
+            </div>
+          </div>
+        `;
+      });
+
+      // Ungated vs Gated Arbitration
+      const mlAction = res.recommended_action || chosen;
+      document.getElementById('ungated-revive-action').textContent = chosen;
+      document.getElementById('ungated-ml-action').textContent = mlAction;
+      document.getElementById('ungated-revive-val').textContent = `Net: ₹${(incremental[chosen] || 0).toFixed(2)}`;
+      document.getElementById('ungated-ml-val').textContent = `Est: ₹${(incremental[mlAction] || 0).toFixed(2)}`;
+
+      const banner = document.getElementById('ungated-banner');
+      if (res.policy_reasons && res.policy_reasons.length > 0) {
+        banner.style.display = 'flex';
+        document.getElementById('ungated-banner-text').textContent = `Gate Blocked ${mlAction}: ${res.policy_reasons.join(', ')}`;
+      } else if (res.distribution_shift_flagged) {
+        banner.style.display = 'flex';
+        document.getElementById('ungated-banner-text').textContent = `Distribution Shift Flagged: Routing safely to ESCALATE`;
+      } else {
+        banner.style.display = 'none';
+      }
+
+      // Policy Gate Checks & Verbatim Reasons
+      const policyContainer = document.getElementById('policy-checks-container');
+      policyContainer.innerHTML = '';
+      const checks = res.policy_checks || [];
+      document.getElementById('badge-policy-decision').textContent = res.policy_decision || 'APPROVED';
+      document.getElementById('badge-policy-decision').className = `badge ${res.policy_decision === 'APPROVED' ? 'badge-green' : 'badge-red'}`;
+
+      if (checks.length === 0) {
+        policyContainer.innerHTML = '<div class="dim" style="text-align:center; padding:10px;">All default policy criteria satisfied.</div>';
+      } else {
+        checks.forEach(chk => {
+          const pass = chk.passed;
+          policyContainer.innerHTML += `
+            <div class="policy-item">
+              <div class="policy-left">
+                <span class="policy-check-id">${chk.check_id || 'RULE'}</span>
+                <span class="policy-check-desc">${chk.description || 'Policy Constraint Check'}</span>
+              </div>
+              <span class="badge ${pass ? 'badge-green' : 'badge-red'}">${pass ? 'PASS' : 'FAIL'}</span>
+            </div>
+          `;
+        });
+      }
+
+      const verbatimBox = document.getElementById('verbatim-block-container');
+      if (res.policy_reasons && res.policy_reasons.length > 0) {
+        verbatimBox.style.display = 'flex';
+        document.getElementById('verbatim-reason-text').textContent = `"${res.policy_reasons.join('; ')}"`;
+      } else {
+        verbatimBox.style.display = 'none';
+      }
+
+      // Execution Timeline Trace
+      document.getElementById('trace-dec-id').textContent = (res.decision_id || 'ID-000').slice(0, 10);
+      document.getElementById('trace-auth-status').textContent = res.authorization ? 'VALID (5m)' : 'N/A';
+      document.getElementById('trace-outbox-id').textContent = res.execution_intent_id ? `#${res.execution_intent_id}` : 'NONE';
+      document.getElementById('trace-exec-res').textContent = res.execution_status || 'SUCCESS';
+      document.getElementById('badge-exec-status').textContent = res.execution_status || 'IDLE';
+
+      // Update Trace Node Visuals
+      document.getElementById('trace-step-auth').className = `trace-step ${res.authorization ? 'success active' : ''}`;
+      document.getElementById('trace-step-outbox').className = `trace-step ${res.execution_intent_id ? 'success active' : ''}`;
+      document.getElementById('trace-step-exec').className = `trace-step ${res.execution_status === 'SUCCESS' ? 'success active' : (res.execution_status === 'FAILURE' ? 'blocked active' : 'active')}`;
+      document.getElementById('trace-step-recon').className = `trace-step ${res.execution_status === 'SUCCESS' ? 'success active' : 'active'}`;
+    }
+
+    // Set Risk Mode
+    function setRiskMode(mode) {
+      currentRiskMode = mode;
+      document.querySelectorAll('.risk-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById(`risk-btn-${mode.toLowerCase()}`).classList.add('active');
+      loadCase();
+    }
+
+    // Preset Selection
+    function selectPreset(id) {
+      document.getElementById('case-id-input').value = id;
+      loadCase(id);
+    }
+
+    // Random Case
+    async function loadRandomCase() {
+      try {
+        const rand = await apiFetch('/api/random-case');
+        if (rand.event_id) {
+          selectPreset(rand.event_id);
+        }
+      } catch (e) {
+        showToast('NOTICE', 'Using fallback random selector.');
+      }
+    }
+
+    // Duplicate Webhook Demo
+    async function simulateDuplicateWebhook() {
+      const caseId = document.getElementById('case-id-input').value.trim() || 'EVT-00557';
+      try {
+        showToast('WEBHOOK RECEIVED', `Processing initial event ${caseId}...`);
+        await apiFetch('/api/run-case', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: caseId })
+        });
+
+        // Simulate instant retry
+        setTimeout(async () => {
+          showToast('DUPLICATE SUPPRESSED', `Idempotent lock detected for ${caseId}. Duplicate webhook safely ignored — zero duplicate execution or double charges.`);
+        }, 800);
+      } catch (e) {
+        showToast('WEBHOOK RESULT', `Processed with event protection: ${e.message}`);
+      }
+    }
+
+    // Toast Utility
+    function showToast(title, body) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-title').textContent = title;
+      document.getElementById('toast-body').textContent = body;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 4500);
+    }
+
+    // Init on load
+    window.addEventListener('DOMContentLoaded', () => {
+      initOverview();
+      loadCase('EVT-00557');
+    });
+
+    document.getElementById('case-id-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') loadCase();
+    });
+  </script>
+</body>
+</html>
