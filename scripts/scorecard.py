@@ -10,7 +10,7 @@ def main():
     if not p.exists():
         raise SystemExit('Run scripts/evaluate_final.py first')
     d=json.loads(p.read_text()); s=d['summary']
-    print('REVIVE 5.0 SCORECARD')
+    print('REVIVE 6.0 SCORECARD')
     print('='*72)
     for name,m in s.items():
         print(f"{name:22s} expected ₹{m['mean_expected_net']:>12,.0f} ± ₹{m['std_expected_net']:>9,.0f} | realized ₹{m['mean_realized_net']:>12,.0f}")

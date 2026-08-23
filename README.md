@@ -1,6 +1,4 @@
-# REVIVE 6.0 — Causal Policy Evaluation
-
-# REVIVE 5.0 — Risk-Aware Incremental Revenue Recovery
+# REVIVE 6.0 — Risk-Aware Incremental Revenue Recovery
 
 REVIVE is a decision engine for failed Razorpay subscription payments. It compares intervention value against the platform's native recovery path, models uncertainty, applies hard safety constraints, and selects the best safe action.
 
@@ -51,23 +49,22 @@ uvicorn app.main:app --reload
 - `docs/RAZORPAY_MAPPING.md`
 - `docs/FAILURE_POSTMORTEM.md`
 
-## Verified 2026-08-20 benchmark
+## Verified benchmark
 
-The checked-in evaluation was run from a clean generated dataset with five evaluation worlds and 200 held-out cases.
+The evaluation is run from a clean generated dataset with five evaluation worlds and 200 held-out cases.
 
 ```text
                     Expected Net Value       Realized Net
-Native              ₹124,846.78              ₹114,758.00
-Rule-based           ₹200,390.08              ₹185,983.60
-ML-only              ₹245,011.13              ₹253,279.40
-REVIVE              ₹142,463.34              ₹129,793.60
-Constrained Oracle  ₹142,886.89              ₹130,563.00
+Native              ₹124,795.48              ₹114,758.00
+Rule-based           ₹200,355.55              ₹185,983.60
+ML-only              ₹243,564.93              ₹253,416.60
+REVIVE              ₹141,418.54              ₹128,646.20
+Constrained Oracle  ₹142,541.45              ₹130,840.60
 Oracle              ₹248,235.15              ₹264,436.60
 
-Safe Policy Capture: 97.65%
+Safe Policy Capture: 93.67%
 Mean decision regret: reported in final_results.json
 Adversarial unsafe automated actions: 0 / 100
-Tests: 12 / 12 passed
 ```
 
 The primary policy metric uses **true expected simulator value**, not one sampled outcome. Realized recovery is shown separately because stochastic outcomes can make a weaker policy look better on a single draw.
@@ -83,6 +80,8 @@ python scripts/statistical_tests.py
 python scripts/evaluate_ope.py
 python scripts/reliability_drills.py
 python scripts/generate_report.py
+python scripts/evaluate_causal.py
+python scripts/evaluate_utility_profiles.py
 ```
 
 ## Optional Explainability
@@ -116,12 +115,7 @@ Install `shap` separately to enable local SHAP explanations; the core installati
 - `scripts/evaluate_ope.py`: experimental doubly robust OPE on synthetic historical logs.
 - `app/models/uplift.py`: action-vs-WAIT uplift estimator; causal claims require appropriate treatment-assignment assumptions.
 - `scripts/generate_report.py`: one-command evaluation report.
-
-## REVIVE 6.0
-
-```bash
-python scripts/evaluate_causal.py
-python scripts/evaluate_utility_profiles.py
-```
+- `scripts/evaluate_causal.py`: causal evaluation suite.
+- `scripts/evaluate_utility_profiles.py`: merchant utility profile evaluations.
 
 Causal claims are bounded by explicit identification assumptions.

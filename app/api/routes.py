@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.get('/api/health')
 def health():
-    return {'status': 'ok', 'service': 'revive', 'version': '5.0'}
+    return {'status': 'ok', 'service': 'revive', 'version': '6.0'}
 
 @router.get('/api/evaluation')
 def evaluation():
