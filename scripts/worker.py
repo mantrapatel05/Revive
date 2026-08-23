@@ -13,7 +13,34 @@ from app.pipeline import RecoveryPipeline
 
 def build_case(payload: dict) -> dict:
     sub = payload.get('payload', {}).get('subscription', {}).get('entity', payload.get('payload', {}).get('subscription', {}))
+    payment = payload.get('payload', {}).get('payment', {}).get('entity', payload.get('payload', {}).get('payment', {}))
     event_type = payload.get('event', '')
+
+    if not sub and payment:
+        amount = float(payment.get('amount', 0) or 0)
+        if amount > 100: amount /= 100.0
+        return {
+            'event_id': f"web-{payment.get('id','unknown')}-{event_type}",
+            'subscription_id': payment.get('subscription_id', payment.get('order_id', 'unknown')),
+            'customer_id': payment.get('contact', payment.get('email', 'unknown')),
+            'amount': amount,
+            'attempt_number': 1,
+            'failure_source': payment.get('error_source', 'bank'),
+            'failure_reason': payment.get('error_reason', 'bank_declined'),
+            'days_since_last_success': 0,
+            'prior_recoveries_count': 0,
+            'payment_method_age_days': 0,
+            'customer_tenure_days': 0,
+            'previous_success_rate': 0.5,
+            'previous_recovery_rate': 0.0,
+            'customer_opted_out': False,
+            'subscription_status': 'pending',
+            'payment_method_type': payment.get('method', 'unknown'),
+            'invoice_status': 'issued',
+            'native_retry_scheduled': True,
+            'is_live': True,
+        }
+
     status = sub.get('status') or ('pending' if event_type == 'subscription.pending' else 'halted' if event_type == 'subscription.halted' else 'unknown')
     amount = float(sub.get('amount', sub.get('charge_at', 0)) or 0)
     if amount > 100: amount /= 100.0
@@ -53,7 +80,7 @@ def main_once(limit=20):
         try:
             payload = json.loads(row['payload_json'])
             event_type = row['event_type'] or payload.get('event','')
-            if event_type in {'subscription.pending', 'subscription.halted'}:
+            if event_type in {'subscription.pending', 'subscription.halted', 'payment.failed'}:
                 case = build_case(payload)
                 pipeline.process(case)
             mark_webhook_processed(row['event_id'], datetime.now(timezone.utc).isoformat())
