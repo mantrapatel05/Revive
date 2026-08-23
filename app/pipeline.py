@@ -150,6 +150,7 @@ class RecoveryPipeline:
             "net_recovered": net,
             "incremental_realized_value": net - wait_net,
             "time_to_recovery": execution.time_to_recovery,
+            "execution_detail": getattr(execution, "detail", ""),
             "execution_intent_id": intent_id,
             "approval_id": approval_id,
             "authorization": authorization.__dict__ if authorization else None,
