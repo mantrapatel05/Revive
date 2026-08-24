@@ -76,7 +76,7 @@ def main():
     capture=(revive-native)/(constrained-native) if constrained>native else 0.0
     output={'seeds':SEEDS,'case_count':len(cases),'summary':summary,'safe_policy_capture':float(capture),'mean_decision_regret':float(np.mean([runs[s]['mean_decision_regret'] for s in runs])),'mean_policy_avoided_upside':float(np.mean([runs[s]['policy_avoided_upside'] for s in runs])),'risk_mode':'BALANCED'}
     RESULTS_DIR.mkdir(parents=True,exist_ok=True); (RESULTS_DIR/'final_results.json').write_text(json.dumps(output,indent=2))
-    print('REVIVE 6.0 EXPECTED-VALUE EVALUATION')
+    print('REVIVE EXPECTED-VALUE EVALUATION')
     for k,v in summary.items():
         try:
             print(f'{k:20s} expected ₹{v["mean_expected_net"]:,.2f} ± ₹{v["std_expected_net"]:,.2f} | realized ₹{v["mean_realized_net"]:,.2f}')

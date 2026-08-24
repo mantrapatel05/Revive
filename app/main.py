@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     app.state.pipeline=RecoveryPipeline(model=model, simulator=SubscriptionSimulator(), audit=audit)
     yield
 
-app=FastAPI(title='REVIVE 6.0', description='Risk-aware incremental revenue recovery for Razorpay subscriptions', version='6.0', lifespan=lifespan)
+app=FastAPI(title='REVIVE', description='Risk-aware incremental revenue recovery for Razorpay subscriptions', version='6.0', lifespan=lifespan)
 app.include_router(routes_router)
 app.include_router(webhooks_router)
 frontend=BASE_DIR/'frontend'

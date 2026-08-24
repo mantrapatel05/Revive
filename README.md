@@ -1,8 +1,8 @@
-# REVIVE 6.0: Risk-Aware Incremental Revenue Recovery Engine
+# REVIVE: Risk-Aware Incremental Revenue Recovery Engine
 
 ## System Overview
 
-REVIVE 6.0 is an enterprise-grade revenue recovery decision engine designed for recurring subscription payments on payment gateways (specifically Razorpay). In high-volume subscription commerce, payment failures are typically handled by static cron-based retry schedules or aggressive blanket notifications. Both approaches introduce severe operational inefficiencies: blanket retries incur unnecessary transaction processing and SMS/notification costs, while premature manual outreach creates customer contact fatigue and elevates churn risk.
+REVIVE is an enterprise-grade revenue recovery decision engine designed for recurring subscription payments on payment gateways (specifically Razorpay). In high-volume subscription commerce, payment failures are typically handled by static cron-based retry schedules or aggressive blanket notifications. Both approaches introduce severe operational inefficiencies: blanket retries incur unnecessary transaction processing and SMS/notification costs, while premature manual outreach creates customer contact fatigue and elevates churn risk.
 
 REVIVE formulates subscription recovery as a constrained causal decision problem. Rather than estimating absolute recovery probability, the engine models **incremental recovery uplift** over the payment gateway's native retry trajectory (`WAIT`). Every intervention is evaluated under bootstrap uncertainty quantification, subjected to non-negotiable deterministic safety policies, and executed through an idempotent, fail-closed outbox subsystem.
 
@@ -92,7 +92,7 @@ Strategy                Expected Net Value (INR)    Realized Net Value (INR)
 Platform Native (WAIT)  124,795.48                  114,758.00
 Rule-Based Heuristic    200,355.55                  185,983.60
 Unconstrained ML-Only   243,564.93                  253,416.60
-REVIVE 6.0 Decision Engine 141,418.54               128,646.20
+REVIVE Decision Engine  141,418.54                  128,646.20
 Constrained Oracle      142,541.45                  130,840.60
 Theoretical Oracle      248,235.15                  264,436.60
 ----------------------------------------------------------------------------------------
@@ -105,7 +105,7 @@ Unit & Integration Test Coverage: 22 passed, 0 failed, 0 xfailed
 
 ### Analysis of Benchmark Metrics
 1. **Unconstrained ML vs. Safe Policy**: Unconstrained ML achieves higher gross recovery by aggressively executing manual recovery actions on every failure. REVIVE intentionally trades ~INR 102,000 in gross recovery to respect merchant safety constraints, avoid duplicate charges, and protect customer relationships.
-2. **Safe Policy Capture (93.67%)**: Evaluated strictly against the Constrained Oracle (the theoretical optimum under identical policy boundaries). The ~4 point differential between REVIVE 5.0 (97.65%) and REVIVE 6.0 (93.67%) is attributable to the active INR 50.00 customer fatigue penalty, which correctly suppresses aggressive outreach on over-contacted users.
+2. **Safe Policy Capture (93.67%)**: Evaluated strictly against the Constrained Oracle (the theoretical optimum under identical policy boundaries). The differential between the zero-fatigue baseline (97.45%) and the production policy (93.67%) is attributable to the active INR 50.00 customer fatigue penalty, which correctly suppresses aggressive outreach on over-contacted users.
 
 ---
 
@@ -145,34 +145,41 @@ To maintain complete architectural integrity, the current implementation acknowl
 python -m venv .venv
 
 # Activate virtual environment
-# Windows PowerShell:
+# Windows (PowerShell):
 .venv\Scripts\Activate.ps1
+# Windows (Command Prompt):
+.venv\Scripts\activate.bat
 # Linux / macOS:
 source .venv/bin/activate
 
-# Install dependencies
+# Install runtime dependencies
 pip install -r requirements.txt
 
-# Configure environment variables
+# Configure environment variables (defaults work out-of-the-box with zero paid dependencies)
+# Linux / macOS:
 cp .env.example .env
+# Windows (CMD):
+copy .env.example .env
+# Windows (PowerShell):
+Copy-Item .env.example .env
 ```
 
-### 2. Data & Model Pipeline Execution (Required Before API Launch)
+### 2. Cold-Start Pipeline Execution (REQUIRED Before API Boot)
 
-Execute the three-stage cold-start pipeline to generate training data, train the calibrated model ensemble, and verify benchmark capture:
+When cloning fresh or running after `make clean`, the following three steps are strictly required to generate datasets, fit models, and populate benchmark figures before launching the API:
 
 ```bash
-# Step 1: Generate development and held-out evaluation datasets
+# [REQUIRED] Step 1: Generate development and held-out evaluation datasets (creates data/generated/eval_cases.csv)
 python scripts/generate_data.py
 
-# Step 2: Fit bootstrap ensemble and calibrate isotonic regressors
+# [REQUIRED] Step 2: Fit bootstrap ensemble and calibrate isotonic regressors (creates models/calibrated_tlearner.joblib)
 python scripts/train_model.py
 
-# Step 3: Run comprehensive evaluation benchmark
+# [REQUIRED] Step 3: Compute expected net recovery benchmark (creates data/evaluation/final_results.json)
 python scripts/evaluate_final.py
 ```
 
-### 3. Launch the API & Control Room Terminal
+### 3. Launch the API & Control Room Terminal (REQUIRED)
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -181,26 +188,31 @@ Access the financial operations terminal at `http://localhost:8000`.
 
 ---
 
-## Verification & Test Suites
+## Verification & Audit Test Suites (OPTIONAL / AUDIT)
+
+These suites validate safety bounds, reliability mechanics, and gateway integrations:
 
 ```bash
-# 1. Execute full unit and reliability test suite
+# 1. Execute full unit and reliability test suite (22 tests)
 pytest -v
 
-# 2. Run reliability circuit breaker and authorization drills
+# 2. Run reliability circuit breaker and authorization TTL drills
 pytest tests/test_reliability_drills.py -v
 
-# 3. Execute 100 adversarial stress cases
+# 3. Execute 100 adversarial stress cases (verifies 0 unsafe actions)
 python scripts/run_adversarial.py
 
-# 4. Verify deterministic policy boundary properties
+# 4. Verify deterministic policy boundary invariants
 python scripts/run_property_tests.py
 
-# 5. Execute live Razorpay Test Mode lifecycle smoke test
-python scripts/test_razorpay_lifecycle.py
+# 5. Rehearse live webhook failure ingestion & idempotency lock
+python scripts/rehearse_failure_injection.py
 
-# 6. Run Doubly Robust Off-Policy Evaluation
+# 6. Run Doubly Robust Off-Policy Evaluation (OPE)
 python scripts/evaluate_ope.py
+
+# 7. Execute live Razorpay Test Mode lifecycle smoke test (requires test keys in .env)
+python scripts/test_razorpay_lifecycle.py
 ```
 
 ---
@@ -209,14 +221,14 @@ python scripts/evaluate_ope.py
 
 | Target | Command | Description |
 |---|---|---|
-| `make setup` | `pip install -r requirements.txt` | Install runtime dependencies |
+| `make setup` | `python -m pip install -r requirements.txt` | Install runtime dependencies |
 | `make data` | `python scripts/generate_data.py` | Generate synthetic data splits |
 | `make train` | `python scripts/train_model.py` | Fit calibrated T-Learner ensemble |
 | `make evaluate` | `python scripts/evaluate_final.py` | Run ground-truth policy benchmark |
 | `make safety` | `python scripts/run_adversarial.py && python scripts/run_property_tests.py` | Run adversarial and property test suites |
-| `make test` | `pytest -v` | Run full test suite |
+| `make test` | `pytest -q` | Run full test suite |
 | `make api` | `uvicorn app.main:app --reload --port 8000` | Launch FastAPI server and dashboard |
-| `make clean` | `rm -rf data/generated data/evaluation models/*.joblib revive.db` | Purge generated artifacts |
+| `make clean` | `rm -rf data/generated data/evaluation models/*.joblib revive.db .pytest_cache` | Purge generated artifacts |
 
 ---
 
