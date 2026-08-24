@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from app.config import DATA_DIR, RESULTS_DIR
 from app.approval import get_pending_approvals, resolve_approval
+from app.receipt import generate_receipt_data, render_receipt_html
 
 router = APIRouter()
 
@@ -111,3 +112,32 @@ def replay_decision(decision_id: str, request: Request):
         return request.app.state.pipeline.decision_store.replay_with_current(decision_id, request.app.state.pipeline)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
+
+@router.get('/api/receipt/{case_id}')
+def api_receipt(case_id: str, request: Request):
+    p = DATA_DIR / 'eval_cases.csv'
+    if not p.exists():
+        raise HTTPException(500, 'Generate evaluation data first')
+    df = pd.read_csv(p)
+    row = df[df.event_id == case_id]
+    if row.empty:
+        raise HTTPException(404, 'case not found')
+    case = row.iloc[0].to_dict()
+    pipe = request.app.state.pipeline
+    decision = pipe.process(case, is_preview=True)
+    return generate_receipt_data(decision)
+
+@router.get('/receipt/{case_id}', response_class=HTMLResponse)
+def view_receipt(case_id: str, request: Request):
+    p = DATA_DIR / 'eval_cases.csv'
+    if not p.exists():
+        raise HTTPException(500, 'Generate evaluation data first')
+    df = pd.read_csv(p)
+    row = df[df.event_id == case_id]
+    if row.empty:
+        raise HTTPException(404, 'case not found')
+    case = row.iloc[0].to_dict()
+    pipe = request.app.state.pipeline
+    decision = pipe.process(case, is_preview=True)
+    receipt_data = generate_receipt_data(decision)
+    return HTMLResponse(render_receipt_html(receipt_data))
