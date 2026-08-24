@@ -47,10 +47,13 @@ class RecoveryPipeline:
             for a in ["WAIT", "NUDGE", "MANUAL_RECOVERY", "ESCALATE"]
         }
 
-    def process(self, case: dict, source: str = "ml") -> dict:
+    def process(self, case: dict, source: str = "ml", risk_mode: str | None = None, is_preview: bool = False) -> dict:
         is_live = bool(case.get("is_live", False))
         distribution_shift_flagged = False
         drift_details = None
+
+        effective_risk_mode = str(risk_mode).upper() if risk_mode is not None else self.risk_mode
+        effective_risk_z = self.RISK_MODES.get(effective_risk_mode, self.risk_z)
 
         # 1. Inbound Authorization Gate: verify version & TTL validity if inbound auth is provided
         inbound_auth = case.get("authorization")
@@ -91,7 +94,9 @@ class RecoveryPipeline:
                     "recommendation_reason": "Inbound authorization expired or policy/model version mismatched",
                     "probabilities": probs,
                     "uncertainty": uncertainty,
-                    "risk_mode": self.risk_mode,
+                    "risk_mode": effective_risk_mode,
+                    "risk_z": effective_risk_z,
+                    "preview": is_preview,
                     "incremental_values": incremental,
                     "feasible_actions": {a: r.decision for a, r in feasibility.items()},
                     "chosen_action": "ESCALATE",
@@ -107,7 +112,7 @@ class RecoveryPipeline:
                     "incremental_realized_value": -10.0,
                     "time_to_recovery": 0.0,
                     "execution_intent_id": None,
-                    "approval_id": create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "Authorization version mismatch", {"case": case}),
+                    "approval_id": create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "Authorization version mismatch", {"case": case}) if not is_preview else None,
                     "authorization": None,
                     "distribution_shift_flagged": False,
                     "drift_details": None,
@@ -116,8 +121,9 @@ class RecoveryPipeline:
                 }
                 decision["decision_id"] = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": "ESCALATE"})[:20]
                 decision["features"] = {k: v.__dict__ if hasattr(v, "__dict__") else v for k, v in case.items()}
-                self.decision_store.save(decision)
-                self.audit.log(decision)
+                if not is_preview:
+                    self.decision_store.save(decision)
+                    self.audit.log(decision)
                 return decision
 
         # 2. Check distribution shift on live cases before model scoring
@@ -154,7 +160,7 @@ class RecoveryPipeline:
             feasibility = self.policy.feasible(case, predictions, native_retry_scheduled)
             feasible = [a for a, r in feasibility.items() if r.decision == "APPROVED"]
 
-            incremental = self.economics.rank_incremental(case, probs, uncertainty, self.risk_z)
+            incremental = self.economics.rank_incremental(case, probs, uncertainty, effective_risk_z, effective_risk_mode)
             rec = self.agent.decide(case, probs)
             rec_action = rec["action"]
 
@@ -167,24 +173,24 @@ class RecoveryPipeline:
             if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
                 best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
 
-        if is_live:
+        if is_live and not is_preview:
             execution = self._execute_live(case, best_action, feasible)
             # Update best_action if _execute_live downgraded it (e.g. missing creds)
             best_action = execution.action
         else:
-            # --- Synthetic benchmark path (byte-for-byte identical to pre-diff) ---
+            # --- Synthetic benchmark path (or preview path) ---
             execution = self.simulator.execute(case, best_action)
 
-        if best_action == "MANUAL_RECOVERY":
+        if best_action == "MANUAL_RECOVERY" and not is_preview:
             self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
 
         authorization = None
         intent_id = None
-        if best_action == "MANUAL_RECOVERY":
+        if best_action == "MANUAL_RECOVERY" and not is_preview:
             authorization = ExecutionAuthorization.create(case["event_id"], best_action, versions()["policy_version"], versions()["model_version"])
             intent_id = enqueue_execution_intent(authorization, {"case": case, "authorization": authorization.__dict__})
 
-        if is_live:
+        if is_live and not is_preview:
             wait_net = 0.0  # No simulator counterfactual for live cases
         else:
             wait_exec = self.simulator.execute(case, "WAIT") if best_action != "WAIT" else None
@@ -192,7 +198,7 @@ class RecoveryPipeline:
         net = execution.recovered_amount - execution.cost
 
         approval_id = None
-        if best_action == "ESCALATE":
+        if best_action == "ESCALATE" and not is_preview:
             approval_id = create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "REVIVE escalated decision", {"case": case, "feasible_actions": {a: r.decision for a, r in feasibility.items()}})
 
         decision = {
@@ -205,7 +211,9 @@ class RecoveryPipeline:
             "recommendation_reason": rec["reason"],
             "probabilities": probs,
             "uncertainty": uncertainty,
-            "risk_mode": self.risk_mode,
+            "risk_mode": effective_risk_mode,
+            "risk_z": effective_risk_z,
+            "preview": is_preview,
             "incremental_values": incremental,
             "feasible_actions": {a: r.decision for a, r in feasibility.items()},
             "chosen_action": best_action,
@@ -233,8 +241,9 @@ class RecoveryPipeline:
         }
         decision["decision_id"] = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
         decision["features"] = dict(case)
-        self.decision_store.save(decision)
-        self.audit.log(decision)
+        if not is_preview:
+            self.decision_store.save(decision)
+            self.audit.log(decision)
         return decision
 
     def _execute_live(self, case: dict, best_action: str, feasible: list) -> "ExecutionResult":

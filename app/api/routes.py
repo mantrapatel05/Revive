@@ -25,7 +25,7 @@ def audit(request: Request, limit: int = 50):
 async def run_case(request: Request):
     body = await request.json()
     event_id = body.get('event_id')
-    risk_mode = str(body.get('risk_mode', 'BALANCED')).upper()
+    raw_risk_mode = body.get('risk_mode')
     if not event_id:
         raise HTTPException(400, 'event_id required')
     p = DATA_DIR / 'eval_cases.csv'
@@ -37,10 +37,11 @@ async def run_case(request: Request):
         raise HTTPException(404, 'case not found')
     case = row.iloc[0].to_dict()
     pipe = request.app.state.pipeline
-    if risk_mode in pipe.RISK_MODES:
-        pipe.risk_mode = risk_mode
-        pipe.risk_z = pipe.RISK_MODES[risk_mode]
-    return pipe.process(case)
+    is_preview = raw_risk_mode is not None
+    risk_mode = str(raw_risk_mode).upper() if raw_risk_mode is not None else pipe.risk_mode
+    if risk_mode not in pipe.RISK_MODES:
+        raise HTTPException(400, f"Invalid risk_mode '{risk_mode}'. Must be one of: {list(pipe.RISK_MODES.keys())}")
+    return pipe.process(case, source="ml", risk_mode=risk_mode, is_preview=is_preview)
 
 @router.get('/api/random-case')
 def random_case():

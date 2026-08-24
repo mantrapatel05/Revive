@@ -50,7 +50,7 @@ class EconomicsEngine:
 
     def incremental_net_value(self, case: dict, action: str, action_probability: float,
                               wait_probability: float, expected_days: float = 0.0,
-                              risk_penalty: float = 0.0) -> float:
+                              risk_penalty: float = 0.0, risk_mode: str | None = None) -> float:
         if action == "WAIT": return 0.0
         amount = float(case.get("amount", 0.0))
         intervention = action_probability * amount * self.time_discount(expected_days)
@@ -59,16 +59,18 @@ class EconomicsEngine:
         count = int(case.get("contact_count_7d", 0))
         if action in {"NUDGE", "MANUAL_RECOVERY"} and count > self.merchant.max_customer_nudges_7d:
             fatigue = self.merchant.customer_fatigue_penalty * (count - self.merchant.max_customer_nudges_7d)
-        churn = self.merchant.churn_penalty if action in {"NUDGE", "MANUAL_RECOVERY"} and self.merchant.risk_mode == "AGGRESSIVE" else 0.0
+        effective_mode = self.merchant.risk_mode if risk_mode is None else str(risk_mode).upper()
+        churn = self.merchant.churn_penalty if action in {"NUDGE", "MANUAL_RECOVERY"} and effective_mode == "AGGRESSIVE" else 0.0
         return intervention - control - self.action_cost(case, action) - fatigue - churn - risk_penalty
 
-    def rank_incremental(self, case: dict, probabilities: dict, uncertainty: dict | None = None, risk_z: float | None = None) -> dict[str, float]:
+    def rank_incremental(self, case: dict, probabilities: dict, uncertainty: dict | None = None, risk_z: float | None = None, risk_mode: str | None = None) -> dict[str, float]:
         wait = float(probabilities.get("WAIT", 0.0))
         uncertainty = uncertainty or {}
         z = self.risk_z if risk_z is None else float(risk_z)
+        mode = self.merchant.risk_mode if risk_mode is None else str(risk_mode).upper()
         values = {"WAIT": 0.0}
         for action in ["NUDGE", "MANUAL_RECOVERY"]:
             p = max(0.0, float(probabilities.get(action, 0.0)) - z * float(uncertainty.get(action, 0.0)))
-            values[action] = self.incremental_net_value(case, action, p, wait, expected_days=float(case.get("nudge_expected_days", 0.0)) if action == "NUDGE" else float(case.get("manual_expected_days", 0.0)))
+            values[action] = self.incremental_net_value(case, action, p, wait, expected_days=float(case.get("nudge_expected_days", 0.0)) if action == "NUDGE" else float(case.get("manual_expected_days", 0.0)), risk_mode=mode)
         values["ESCALATE"] = -self.action_cost(case, "ESCALATE")
         return values
