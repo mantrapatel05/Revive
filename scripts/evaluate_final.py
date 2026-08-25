@@ -1,9 +1,10 @@
-import json, sys
+import argparse, json, sys
 from pathlib import Path
 import numpy as np, pandas as pd
 ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
 from app.config import DATA_DIR,RESULTS_DIR,MODEL_DIR
 from app.models.calibrated_tlearner import CalibratedTLearner
+from app.models.calibrated_xlearner import CalibratedXLearner
 from app.execution.simulator import SubscriptionSimulator
 from app.policy.gate import PolicyGate
 from app.economics import EconomicsEngine
@@ -14,8 +15,15 @@ def rec_result(r):
     return {'action':r.action,'success':r.success,'recovered_amount':r.recovered_amount,'cost':r.cost,'net_recovered':r.recovered_amount-r.cost}
 
 def main():
+    parser = argparse.ArgumentParser(description="Evaluate REVIVE policy benchmark")
+    parser.add_argument("--model", choices=["tlearner", "xlearner"], default="tlearner", help="Model architecture to evaluate")
+    args = parser.parse_args()
+
     cases=pd.read_csv(DATA_DIR/'eval_cases.csv').to_dict('records')
-    model=CalibratedTLearner(MODEL_DIR); model.load()
+    if args.model == "xlearner":
+        model = CalibratedXLearner(MODEL_DIR); model.load()
+    else:
+        model = CalibratedTLearner(MODEL_DIR); model.load()
     model_predictions=model.predict_dataset(cases)
     gate=PolicyGate(); econ=EconomicsEngine(); runs={}
     for seed in SEEDS:
