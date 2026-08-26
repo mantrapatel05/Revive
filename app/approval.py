@@ -14,7 +14,7 @@ def create_approval_request(case_id: str, amount: float, reason: str, payload: D
 
 def get_pending_approvals(limit: int = 50) -> List[Dict[str, Any]]:
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM approval_queue WHERE status='PENDING' ORDER BY id LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM approval_queue WHERE status='PENDING' ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 

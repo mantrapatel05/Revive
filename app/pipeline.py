@@ -112,7 +112,18 @@ class RecoveryPipeline:
                     "incremental_realized_value": -10.0,
                     "time_to_recovery": 0.0,
                     "execution_intent_id": None,
-                    "approval_id": create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "Authorization version mismatch", {"case": case}) if not is_preview else None,
+                    "approval_id": create_approval_request(
+                        case["event_id"],
+                        float(case.get("amount", 0.0)),
+                        "Inbound authorization expired or policy/model version mismatched",
+                        {
+                            "case": case,
+                            "probabilities": probs,
+                            "uncertainty": uncertainty,
+                            "chosen_action": "ESCALATE",
+                            "policy_reasons": ["Inbound authorization expired or policy/model version mismatched"],
+                        },
+                    ) if not is_preview else None,
                     "authorization": None,
                     "distribution_shift_flagged": False,
                     "drift_details": None,
@@ -199,7 +210,34 @@ class RecoveryPipeline:
 
         approval_id = None
         if best_action == "ESCALATE" and not is_preview:
-            approval_id = create_approval_request(case["event_id"], float(case.get("amount", 0.0)), "REVIVE escalated decision", {"case": case, "feasible_actions": {a: r.decision for a, r in feasibility.items()}})
+            reasons_list = []
+            if rec_action in feasibility and feasibility[rec_action].decision == "BLOCKED":
+                reasons_list.extend(feasibility[rec_action].reasons)
+            for a, r in feasibility.items():
+                if r.decision == "BLOCKED" and r.reasons:
+                    for re in r.reasons:
+                        if re not in reasons_list:
+                            reasons_list.append(re)
+            if not reasons_list and rec.get("reason"):
+                reasons_list = [rec["reason"]]
+            escalation_reason = "; ".join(reasons_list) if reasons_list else "Policy gate routed to ESCALATE"
+
+            escalation_payload = {
+                "case": case,
+                "probabilities": probs,
+                "uncertainty": uncertainty,
+                "chosen_action": best_action,
+                "recommended_action": rec_action,
+                "policy_reasons": reasons_list,
+                "feasible_actions": {a: r.decision for a, r in feasibility.items()},
+                "incremental_values": incremental,
+            }
+            approval_id = create_approval_request(
+                case_id=case["event_id"],
+                amount=float(case.get("amount", 0.0)),
+                reason=escalation_reason,
+                payload=escalation_payload,
+            )
 
         decision = {
             "event_id": case["event_id"],
