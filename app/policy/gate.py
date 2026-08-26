@@ -28,9 +28,20 @@ class PolicyResult:
 class PolicyGate:
     """Deterministic authorization boundary; it never executes money actions."""
 
-    def __init__(self, max_auto_action_amount: float = 3000.0, min_recovery_probability: float = 0.20):
+    def __init__(self, max_auto_action_amount: float = 3000.0, min_recovery_probability: float = 0.20,
+                 require_human_above: float = 10000.0, max_customer_nudges_7d: int = 2):
         self.max_auto_action_amount = float(max_auto_action_amount)
         self.min_recovery_probability = float(min_recovery_probability)
+        self.require_human_above = float(require_human_above)
+        self.max_customer_nudges_7d = int(max_customer_nudges_7d)
+
+    @classmethod
+    def from_merchant_config(cls, config: Any) -> "PolicyGate":
+        return cls(
+            max_auto_action_amount=float(getattr(config, 'max_auto_action_amount', 3000.0)),
+            require_human_above=float(getattr(config, 'require_human_above', 10000.0)),
+            max_customer_nudges_7d=int(getattr(config, 'max_customer_nudges_7d', 2))
+        )
 
     def evaluate_action(self, case: Dict[str, Any], action: str, probability_mean: float,
                         native_retry_scheduled: bool = False) -> PolicyResult:
@@ -56,10 +67,14 @@ class PolicyGate:
             if opted_out:
                 hard.append("Customer opted out")
             amount = float(case.get("amount", 0.0))
-            amount_ok = amount <= self.max_auto_action_amount
-            checks.append(PolicyCheck("FIN-AUTO-002", "Amount within automatic action ceiling", amount_ok, True, {"amount": amount, "limit": self.max_auto_action_amount}))
+            ceiling = min(self.max_auto_action_amount, self.require_human_above)
+            amount_ok = amount <= ceiling
+            checks.append(PolicyCheck("FIN-AUTO-002", "Amount within automatic action ceiling", amount_ok, True, {"amount": amount, "limit": ceiling}))
             if not amount_ok:
-                hard.append("Amount exceeds automatic action ceiling")
+                if amount > self.require_human_above:
+                    hard.append(f"Amount exceeds human approval threshold (₹{self.require_human_above:,.0f})")
+                else:
+                    hard.append("Amount exceeds automatic action ceiling")
 
         if action == "MANUAL_RECOVERY":
             attempt = int(case.get("attempt_number", 0))
@@ -85,8 +100,8 @@ class PolicyGate:
             if not prob_ok:
                 hard.append("Estimated recovery probability is below automation threshold")
 
-        if int(case.get("contact_count_7d", 0)) > 2 and action in {"NUDGE", "MANUAL_RECOVERY"}:
-            soft.append("High contact frequency in last 7 days")
+        if int(case.get("contact_count_7d", 0)) > self.max_customer_nudges_7d and action in {"NUDGE", "MANUAL_RECOVERY"}:
+            soft.append(f"Contact frequency exceeds 7-day budget ({self.max_customer_nudges_7d} touches)")
 
         if hard:
             return PolicyResult("BLOCKED", None, checks, hard, soft, "P-BLOCK")

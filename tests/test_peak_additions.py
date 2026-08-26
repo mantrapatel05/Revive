@@ -94,3 +94,99 @@ def test_api_approvals_endpoints(tmp_path, monkeypatch):
     # Pending queue should now be empty
     res_empty = client.get('/api/approvals/pending')
     assert len(res_empty.json()['approvals']) == 0
+
+
+def test_merchant_config_endpoints(tmp_path, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_config.db')
+    import app.db as db
+    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_config.db')
+    init_db()
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.pipeline import RecoveryPipeline
+    from app.policy.gate import PolicyGate
+    from app.execution.simulator import SubscriptionSimulator
+
+    # Setup pipeline on app state
+    pipe = RecoveryPipeline(policy=PolicyGate(), simulator=SubscriptionSimulator(42))
+    app.state.pipeline = pipe
+    client = TestClient(app)
+
+    # 1. GET /api/merchant-config
+    res = client.get('/api/merchant-config')
+    assert res.status_code == 200
+    cfg = res.json()['config']
+    assert cfg['risk_mode'] == 'BALANCED'
+    assert cfg['max_auto_action_amount'] == 3000.0
+    assert cfg['require_human_above'] == 10000.0
+
+    # 2. PUT /api/merchant-config with new settings
+    new_settings = {
+        "risk_mode": "AGGRESSIVE",
+        "max_auto_action_amount": 7500.0,
+        "require_human_above": 15000.0,
+        "max_customer_nudges_7d": 4
+    }
+    put_res = client.put('/api/merchant-config', json=new_settings)
+    assert put_res.status_code == 200
+    updated_cfg = put_res.json()['config']
+    assert updated_cfg['risk_mode'] == 'AGGRESSIVE'
+    assert updated_cfg['max_auto_action_amount'] == 7500.0
+    assert updated_cfg['require_human_above'] == 15000.0
+    assert updated_cfg['max_customer_nudges_7d'] == 4
+
+    # 3. Verify pipeline state reflects the updated config
+    assert pipe.risk_mode == 'AGGRESSIVE'
+    assert pipe.risk_z == 0.0
+    assert pipe.policy.max_auto_action_amount == 7500.0
+    assert pipe.policy.require_human_above == 15000.0
+    assert pipe.policy.max_customer_nudges_7d == 4
+
+
+def test_pipeline_dynamic_merchant_config_behavior(tmp_path, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_dyn_pipe.db')
+    import app.db as db
+    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_dyn_pipe.db')
+    init_db()
+
+    from app.pipeline import RecoveryPipeline
+    from app.policy.gate import PolicyGate
+    from app.execution.simulator import SubscriptionSimulator
+
+    pipe = RecoveryPipeline(simulator=SubscriptionSimulator(42))
+
+    # A case with amount 4999 (above default 3000 limit)
+    case_high_val = {
+        "event_id": "EVT-TEST-HIGH-VAL",
+        "amount": 4999.0,
+        "subscription_status": "pending",
+        "customer_opted_out": False,
+        "payment_method_type": "upi_autopay",
+        "contact_count_7d": 1,
+        "invoice_status": "issued",
+        "attempt_number": 1,
+        "nudge_incentive_cost": 0.0,
+        "manual_recovery_ops_cost": 0.0,
+        "escalation_ops_cost": 0.0,
+        "native_retry_scheduled": False,
+        "customer_tenure_days": 180
+    }
+
+    # Under default 3000 max_auto_action_amount:
+    res_default = pipe.process(case_high_val, is_preview=True)
+    # NUDGE should be blocked due to amount ceiling
+    feasible = pipe.policy.feasible(case_high_val, {"NUDGE": 0.5, "WAIT": 0.1, "MANUAL_RECOVERY": 0.1})
+    fin_check = next(c for c in feasible["NUDGE"].checks if c.check_id == "FIN-AUTO-002")
+    assert not fin_check.passed
+    assert "Amount exceeds automatic action ceiling" in feasible["NUDGE"].hard_failures
+
+    # Now raise max_auto_action_amount to 6000
+    pipe.update_merchant_config({"max_auto_action_amount": 6000.0})
+    feasible_updated = pipe.policy.feasible(case_high_val, {"NUDGE": 0.5, "WAIT": 0.1, "MANUAL_RECOVERY": 0.1})
+    # Now NUDGE passes amount ceiling check!
+    fin_check_updated = next(c for c in feasible_updated["NUDGE"].checks if c.check_id == "FIN-AUTO-002")
+    assert fin_check_updated.passed
+    assert "Amount exceeds automatic action ceiling" not in feasible_updated["NUDGE"].hard_failures

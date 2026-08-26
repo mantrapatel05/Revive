@@ -13,6 +13,46 @@ class MerchantConfig:
     churn_penalty: float = 100.0
     support_cost_per_escalation: float = 20.0
 
+    def to_dict(self) -> dict:
+        return {
+            "risk_mode": self.risk_mode,
+            "max_auto_action_amount": self.max_auto_action_amount,
+            "max_customer_nudges_7d": self.max_customer_nudges_7d,
+            "allow_manual_recovery": self.allow_manual_recovery,
+            "require_human_above": self.require_human_above,
+            "customer_fatigue_penalty": self.customer_fatigue_penalty,
+            "churn_penalty": self.churn_penalty,
+            "support_cost_per_escalation": self.support_cost_per_escalation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MerchantConfig":
+        return cls(
+            risk_mode=str(data.get("risk_mode", "BALANCED")).upper(),
+            max_auto_action_amount=float(data.get("max_auto_action_amount", 3000.0)),
+            max_customer_nudges_7d=int(data.get("max_customer_nudges_7d", 2)),
+            allow_manual_recovery=bool(data.get("allow_manual_recovery", True)),
+            require_human_above=float(data.get("require_human_above", 10000.0)),
+            customer_fatigue_penalty=float(data.get("customer_fatigue_penalty", 50.0)),
+            churn_penalty=float(data.get("churn_penalty", 100.0)),
+            support_cost_per_escalation=float(data.get("support_cost_per_escalation", 20.0)),
+        )
+
+    @classmethod
+    def load_persisted(cls) -> "MerchantConfig":
+        from app.db import get_persisted_merchant_config
+        d = get_persisted_merchant_config()
+        if d:
+            try:
+                return cls.from_dict(d)
+            except Exception:
+                pass
+        return cls()
+
+    def save_persisted(self) -> None:
+        from app.db import save_persisted_merchant_config
+        save_persisted_merchant_config(self.to_dict())
+
 @dataclass(frozen=True)
 class ActionCosts:
     WAIT: float = 0.0

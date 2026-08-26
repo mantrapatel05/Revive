@@ -10,7 +10,7 @@ from app.config import DATA_DIR, RESULTS_DIR
 
 def run_profile(cfg):
     df=pd.read_csv(DATA_DIR/'eval_cases.csv'); sim=SubscriptionSimulator(seed=42)
-    pipe=RecoveryPipeline(simulator=sim, policy=PolicyGate(), risk_mode=cfg.risk_mode, merchant_config=cfg)
+    pipe=RecoveryPipeline(simulator=sim, policy=PolicyGate.from_merchant_config(cfg), risk_mode=cfg.risk_mode, merchant_config=cfg)
     net=0.0; escalations=0
     for _, row in df.iterrows():
         rec=pipe.process(row.to_dict(), source='sim')

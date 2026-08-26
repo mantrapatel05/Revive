@@ -69,6 +69,10 @@ def init_db():
             reviewer TEXT,
             created_at TEXT NOT NULL,
             resolved_at TEXT)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS merchant_config (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            config_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL)''')
 
 
 def enqueue_webhook_event(event_id: str, event_type: str, payload_json: str, received_at: str) -> bool:
@@ -100,3 +104,26 @@ def mark_webhook_processed(event_id: str, processed_at: str):
 def mark_webhook_failed(event_id: str, error: str):
     with get_conn() as conn:
         conn.execute("UPDATE webhook_events SET status='PENDING', last_error=? WHERE event_id=?", (error,event_id))
+
+
+def get_persisted_merchant_config() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT config_json FROM merchant_config WHERE id=1").fetchone()
+        if row and row['config_json']:
+            try:
+                import json
+                return json.loads(row['config_json'])
+            except Exception:
+                return None
+    return None
+
+
+def save_persisted_merchant_config(config_dict: dict) -> None:
+    import json
+    cfg_str = json.dumps(config_dict)
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO merchant_config(id, config_json, updated_at) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at",
+            (cfg_str, now),
+        )

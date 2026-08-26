@@ -108,6 +108,27 @@ async def resolve_approval_route(approval_id: int, request: Request):
     }
 
 
+@router.get('/api/merchant-config')
+def get_merchant_config_route(request: Request):
+    pipe = request.app.state.pipeline
+    return {"config": pipe.merchant_config.to_dict()}
+
+
+@router.put('/api/merchant-config')
+async def update_merchant_config_route(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    pipe = request.app.state.pipeline
+    try:
+        updated = pipe.update_merchant_config(body)
+        return {"status": "updated", "config": updated.to_dict()}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
 @router.get('/api/explain/{case_id}')
 def explain_case(case_id: str, request: Request):
     p = DATA_DIR / 'eval_cases.csv'

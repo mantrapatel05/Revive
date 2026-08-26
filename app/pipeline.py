@@ -23,21 +23,43 @@ logger = logging.getLogger(__name__)
 class RecoveryPipeline:
     RISK_MODES = {"CONSERVATIVE": 2.0, "BALANCED": 1.0, "AGGRESSIVE": 0.0}
 
-    def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode="BALANCED", merchant_config=None, decision_store=None, drift_detector=None):
+    def __init__(self, model=None, simulator=None, policy=None, agent=None, audit=None, risk_mode=None, merchant_config=None, decision_store=None, drift_detector=None):
         init_db()
         self.model = model
         self.simulator = simulator or SubscriptionSimulator()
-        self.policy = policy or PolicyGate()
+        if merchant_config is not None:
+            self.merchant_config = merchant_config
+        else:
+            self.merchant_config = MerchantConfig.load_persisted()
+            if risk_mode is not None:
+                self.merchant_config = MerchantConfig.from_dict({**self.merchant_config.to_dict(), "risk_mode": risk_mode})
+
+        self.policy = policy or PolicyGate.from_merchant_config(self.merchant_config)
         self.agent = agent or RecoveryAgent()
         self.audit = audit or AuditLogger()
-        self.merchant_config = merchant_config or MerchantConfig(risk_mode=risk_mode)
         self.economics = EconomicsEngine(merchant_config=self.merchant_config)
         self.risk_mode = self.merchant_config.risk_mode
-        self.risk_z = {"CONSERVATIVE": 2.0, "BALANCED": 1.0, "AGGRESSIVE": 0.0}.get(risk_mode, 1.0)
+        self.risk_z = self.RISK_MODES.get(self.risk_mode, 1.0)
         self.circuit_breaker = CircuitBreaker()
         self.live_executor = LiveExecutor()
         self.decision_store = decision_store or DecisionStore()
         self.drift_detector = drift_detector or DriftDetector(DATA_DIR / 'training_data.csv')
+
+    def update_merchant_config(self, new_config: MerchantConfig | dict) -> MerchantConfig:
+        if isinstance(new_config, dict):
+            merged = {**self.merchant_config.to_dict(), **new_config}
+            self.merchant_config = MerchantConfig.from_dict(merged)
+        else:
+            self.merchant_config = new_config
+
+        self.merchant_config.save_persisted()
+        self.economics = EconomicsEngine(merchant_config=self.merchant_config)
+        self.risk_mode = self.merchant_config.risk_mode
+        self.risk_z = self.RISK_MODES.get(self.risk_mode, 1.0)
+        self.policy.max_auto_action_amount = self.merchant_config.max_auto_action_amount
+        self.policy.require_human_above = self.merchant_config.require_human_above
+        self.policy.max_customer_nudges_7d = self.merchant_config.max_customer_nudges_7d
+        return self.merchant_config
 
     def _predictions(self, case: dict, source: str):
         if self.model is not None and source == "ml":
