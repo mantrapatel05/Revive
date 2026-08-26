@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .env
 *.db
+*.db-shm
+*.db-wal
 models/*.joblib
 models/*.pkl
 data/generated/*.csv
