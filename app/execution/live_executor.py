@@ -57,19 +57,53 @@ class LiveExecutor:
             )
 
         if action == "NUDGE":
-            # TODO: Wire nudge to email/SMS/payment-link notification flow.
-            # Raising NotImplementedError rather than silently falling back to
-            # the simulator — the pipeline catches this and falls back to WAIT.
-            raise NotImplementedError(
-                "NUDGE is not yet wired for live execution. "
-                "TODO: integrate with customer notification or payment-link flow."
-            )
+            return self._execute_nudge(case, amount)
 
         if action == "MANUAL_RECOVERY":
             return self._execute_manual_recovery(case, amount)
 
         # Should never reach here due to the action check above
         raise ValueError(f"Unhandled action: {action}")
+
+    def _execute_nudge(self, case: dict, amount: float) -> ExecutionResult:
+        """Create a real Razorpay Payment Link for customer nudge recovery."""
+        amount_paise = int(amount * 100)
+        description = (
+            f"REVIVE Nudge: Payment recovery for {case.get('event_id', 'unknown')} — "
+            f"subscription {case.get('subscription_id', 'unknown')}"
+        )
+
+        customer = None
+        customer_id = case.get("customer_id")
+        if customer_id and customer_id != "unknown":
+            customer = {"contact": customer_id}
+
+        logger.info(
+            "[LIVE] Creating Customer Nudge Payment Link for %s, amount ₹%.2f",
+            case.get("event_id"), amount,
+        )
+
+        result = self.adapter.create_payment_link(
+            amount_paise=amount_paise,
+            description=description,
+            customer=customer,
+        )
+
+        link_id = result.get("id", "")
+        short_url = result.get("short_url", "")
+        logger.info(
+            "[LIVE] Nudge Payment Link created: id=%s url=%s", link_id, short_url,
+        )
+
+        return ExecutionResult(
+            success=False,
+            recovered_amount=0.0,
+            cost=1.0,
+            action="NUDGE",
+            detail=f"live: payment_link created id={link_id} url={short_url}",
+            probability=0.0,
+            time_to_recovery=0.0,
+        )
 
     def _execute_manual_recovery(self, case: dict, amount: float) -> ExecutionResult:
         """Create a real Razorpay Payment Link for manual recovery."""

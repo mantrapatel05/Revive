@@ -3,9 +3,8 @@ from pathlib import Path
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
-from app.config import DATA_DIR, RESULTS_DIR
+from app.config import DATA_DIR, RESULTS_DIR, ENABLE_TESTMODE_EXECUTION, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 from app.approval import get_pending_approvals, resolve_approval
-from app.receipt import generate_receipt_data, render_receipt_html
 
 router = APIRouter()
 
@@ -22,6 +21,33 @@ def evaluation():
 def audit(request: Request, limit: int = 50):
     return {'logs': request.app.state.audit.recent(limit)}
 
+@router.post('/api/create-payment-link')
+async def create_payment_link_route(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    event_id = body.get('event_id', 'EVT-TEST')
+    amount = float(body.get('amount', 1999.0))
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(400, "Razorpay credentials not set in .env")
+    try:
+        from app.execution.razorpay import RazorpayAdapter
+        adapter = RazorpayAdapter()
+        res = adapter.create_payment_link(
+            amount_paise=int(amount * 100),
+            description=f"REVIVE Recovery Checkout for {event_id}",
+        )
+        return {
+            "status": "created",
+            "payment_link_id": res.get("id"),
+            "short_url": res.get("short_url"),
+            "amount": amount,
+            "event_id": event_id,
+        }
+    except Exception as exc:
+        raise HTTPException(502, f"Razorpay link creation failed: {exc}")
+
 @router.post('/api/run-case')
 async def run_case(request: Request):
     body = await request.json()
@@ -37,6 +63,8 @@ async def run_case(request: Request):
     if row.empty:
         raise HTTPException(404, 'case not found')
     case = row.iloc[0].to_dict()
+    if ENABLE_TESTMODE_EXECUTION:
+        case['is_live'] = True
     pipe = request.app.state.pipeline
     is_preview = raw_risk_mode is not None
     risk_mode = str(raw_risk_mode).upper() if raw_risk_mode is not None else pipe.risk_mode
