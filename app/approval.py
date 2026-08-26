@@ -18,12 +18,13 @@ def get_pending_approvals(limit: int = 50) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def resolve_approval(approval_id: int, decision: str, reviewer: str = "demo-reviewer") -> None:
+def resolve_approval(approval_id: int, decision: str, reviewer: str = "demo-reviewer") -> bool:
     decision = decision.upper()
     if decision not in {"APPROVED", "REJECTED"}:
         raise ValueError("decision must be APPROVED or REJECTED")
     with get_conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE approval_queue SET status=?, reviewer=?, resolved_at=? WHERE id=?",
-            (decision, reviewer, datetime.now(timezone.utc).isoformat(), approval_id),
+            (decision, reviewer, datetime.now(timezone.utc).isoformat(), int(approval_id)),
         )
+        return cur.rowcount > 0

@@ -75,15 +75,37 @@ def dashboard():
     return FileResponse(Path(__file__).resolve().parents[2] / 'frontend/index.html')
 
 
+@router.get('/api/approvals/pending')
 @router.get('/api/approvals')
-def approvals():
+def pending_approvals():
     return {"approvals": get_pending_approvals()}
 
 @router.post('/api/approvals/{approval_id}/resolve')
 async def resolve_approval_route(approval_id: int, request: Request):
-    body = await request.json()
-    resolve_approval(approval_id, body.get('decision','REJECTED'), body.get('reviewer','demo-reviewer'))
-    return {"status":"resolved","approval_id":approval_id,"decision":body.get('decision','REJECTED').upper()}
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    decision = str(body.get('decision', '')).upper()
+    if decision not in {"APPROVED", "REJECTED"}:
+        raise HTTPException(400, "decision must be 'APPROVED' or 'REJECTED'")
+
+    reviewer = str(body.get('reviewer', 'human-reviewer')).strip() or 'human-reviewer'
+    try:
+        updated = resolve_approval(approval_id, decision, reviewer)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+    if not updated:
+        raise HTTPException(404, f"Approval request with id {approval_id} not found")
+
+    return {
+        "status": "resolved",
+        "approval_id": approval_id,
+        "decision": decision,
+        "reviewer": reviewer
+    }
 
 
 @router.get('/api/explain/{case_id}')

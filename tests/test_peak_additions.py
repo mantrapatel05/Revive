@@ -60,3 +60,37 @@ def test_pipeline_escalate_creates_approval_request(tmp_path, monkeypatch):
     assert 'chosen_action' in payload
     assert payload['chosen_action'] == 'ESCALATE'
     assert 'uncertainty' in payload
+
+
+def test_api_approvals_endpoints(tmp_path, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_api_app.db')
+    import app.db as db
+    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_api_app.db')
+    init_db()
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    app_id = create_approval_request('API-CASE-1', 5000.0, 'High value manual review')
+
+    # GET /api/approvals/pending
+    res = client.get('/api/approvals/pending')
+    assert res.status_code == 200
+    assert len(res.json()['approvals']) == 1
+    assert res.json()['approvals'][0]['id'] == app_id
+
+    # POST /api/approvals/{id}/resolve (Invalid decision)
+    res_bad = client.post(f'/api/approvals/{app_id}/resolve', json={'decision': 'INVALID'})
+    assert res_bad.status_code == 400
+
+    # POST /api/approvals/{id}/resolve (Valid decision)
+    res_ok = client.post(f'/api/approvals/{app_id}/resolve', json={'decision': 'APPROVED', 'reviewer': 'supervisor-bob'})
+    assert res_ok.status_code == 200
+    assert res_ok.json()['status'] == 'resolved'
+    assert res_ok.json()['decision'] == 'APPROVED'
+
+    # Pending queue should now be empty
+    res_empty = client.get('/api/approvals/pending')
+    assert len(res_empty.json()['approvals']) == 0
