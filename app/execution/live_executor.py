@@ -46,6 +46,7 @@ class LiveExecutor:
                 success=False, recovered_amount=0.0, cost=0.0,
                 action="WAIT", detail="live: waiting for native retry",
                 probability=0.0, time_to_recovery=0.0,
+                status="NO_ACTION", provider="razorpay",
             )
 
         if action == "ESCALATE":
@@ -54,6 +55,7 @@ class LiveExecutor:
                 success=False, recovered_amount=0.0, cost=10.0,
                 action="ESCALATE", detail="live: queued for human review",
                 probability=0.0, time_to_recovery=0.0,
+                status="QUEUED", provider="razorpay",
             )
 
         if action == "NUDGE":
@@ -66,7 +68,13 @@ class LiveExecutor:
         raise ValueError(f"Unhandled action: {action}")
 
     def _execute_nudge(self, case: dict, amount: float) -> ExecutionResult:
-        """Create a real Razorpay Payment Link for customer nudge recovery."""
+        """Create an actionable Razorpay Payment Link for customer nudge recovery workflow.
+        
+        Semantics:
+        Payment link creation requests an external payment recovery action (EXECUTION_REQUESTED).
+        It does NOT mean payment has recovered. Final state remains PAYMENT_PENDING until provider
+        evidence (webhook or status inquiry) establishes actual payment completion.
+        """
         amount_paise = int(amount * 100)
         description = (
             f"REVIVE Nudge: Payment recovery for {case.get('event_id', 'unknown')} — "
@@ -103,10 +111,22 @@ class LiveExecutor:
             detail=f"live: payment_link created id={link_id} url={short_url}",
             probability=0.0,
             time_to_recovery=0.0,
+            status="EXECUTION_REQUESTED",
+            payment_link_id=link_id,
+            payment_link_url=short_url,
+            provider_response=result,
+            provider="razorpay",
         )
 
     def _execute_manual_recovery(self, case: dict, amount: float) -> ExecutionResult:
-        """Create a real Razorpay Payment Link for manual recovery."""
+        """Create an actionable Razorpay Payment Link for manual recovery workflow.
+        
+        Semantics:
+        MANUAL_RECOVERY = create an actionable Test Mode payment request for the failed
+        payment/recovery workflow. It does NOT mean "money recovered immediately".
+        Status is strictly EXECUTION_REQUESTED; final recovery state remains PAYMENT_PENDING
+        until provider evidence proves payment success.
+        """
         amount_paise = int(amount * 100)
         description = (
             f"REVIVE recovery for {case.get('event_id', 'unknown')} — "
@@ -135,10 +155,6 @@ class LiveExecutor:
             "[LIVE] Payment Link created: id=%s url=%s", link_id, short_url,
         )
 
-        # Return shape matches ExecutionResult from simulator.execute().
-        # success=False because payment hasn't been collected yet — the link was
-        # just created. Reconciliation will later confirm actual payment status.
-        # Cost is the same as the simulator's MANUAL_RECOVERY action cost.
         return ExecutionResult(
             success=False,
             recovered_amount=0.0,
@@ -147,4 +163,9 @@ class LiveExecutor:
             detail=f"live: payment_link created id={link_id} url={short_url}",
             probability=0.0,
             time_to_recovery=0.0,
+            status="EXECUTION_REQUESTED",
+            payment_link_id=link_id,
+            payment_link_url=short_url,
+            provider_response=result,
+            provider="razorpay",
         )

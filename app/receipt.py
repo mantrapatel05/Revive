@@ -77,6 +77,10 @@ def generate_receipt_data(decision: dict, replay: dict | None = None) -> dict:
         "execution_outcome": {
             "chosen_action": decision.get("chosen_action", "WAIT"),
             "execution_status": decision.get("execution_status", "SUCCESS"),
+            "execution_result": decision.get("execution_result", {}),
+            "final_state": decision.get("final_state", {"state": "CONFIRMED" if decision.get("execution_status") == "SUCCESS" else "PAYMENT_PENDING"}),
+            "payment_link_id": decision.get("payment_link_id"),
+            "payment_link_url": decision.get("payment_link_url"),
             "execution_intent_id": decision.get("execution_intent_id"),
             "approval_id": decision.get("approval_id"),
             "authorization": decision.get("authorization"),

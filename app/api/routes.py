@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from app.config import DATA_DIR, RESULTS_DIR, ENABLE_TESTMODE_EXECUTION, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 from app.approval import get_pending_approvals, resolve_approval
+from app.receipt import generate_receipt_data, render_receipt_html
 
 router = APIRouter()
 

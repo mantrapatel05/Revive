@@ -14,9 +14,9 @@ class ExecutionAuthorization:
     authorized: bool
 
     @staticmethod
-    def create(case_id: str, action: str, policy_version: str, model_version: str) -> "ExecutionAuthorization":
+    def create(case_id: str, action: str, policy_version: str, model_version: str, decision_id: str | None = None) -> "ExecutionAuthorization":
         return ExecutionAuthorization(
-            decision_id=str(uuid.uuid4()),
+            decision_id=decision_id or str(uuid.uuid4()),
             case_id=case_id,
             action=action,
             policy_version=policy_version,

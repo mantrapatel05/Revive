@@ -17,6 +17,11 @@ class ExecutionResult:
     detail: str
     probability: float
     time_to_recovery: float
+    status: str = "EXECUTION_REQUESTED"
+    payment_link_id: str | None = None
+    payment_link_url: str | None = None
+    provider_response: dict | None = None
+    provider: str = "razorpay"
 
 
 class SubscriptionSimulator:

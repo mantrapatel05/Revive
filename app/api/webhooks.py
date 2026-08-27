@@ -3,6 +3,7 @@ from fastapi import APIRouter, Request, HTTPException
 from app.config import RAZORPAY_WEBHOOK_SECRET
 from app.events.signature import verify_razorpay_signature, extract_event_id
 from app.events.idempotency import record_event
+from app.execution.reconciliation import reconcile_webhook_event
 
 router = APIRouter()
 
@@ -27,6 +28,9 @@ async def razorpay_webhook(request: Request):
     if not inserted:
         return {'status': 'duplicate', 'event_id': event_id}
 
-    # Intentionally no external side-effect is executed here. Razorpay considers non-2xx
-    # responses delivery failures and retries; durable inbox processing happens out-of-band.
+    # If this is a payment resolution event, correlate and reconcile final state
+    if event_type in {'payment_link.paid', 'payment.captured', 'invoice.paid', 'order.paid', 'payment_link.cancelled', 'payment_link.expired'}:
+        reconciliation_result = reconcile_webhook_event(payload, event_id=event_id)
+        return {'status': 'accepted', 'event_id': event_id, 'event': event_type, 'reconciliation': reconciliation_result}
+
     return {'status': 'accepted', 'event_id': event_id, 'event': event_type}

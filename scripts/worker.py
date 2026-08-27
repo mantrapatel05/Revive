@@ -84,6 +84,9 @@ def main_once(limit=20):
             if event_type in {'subscription.pending', 'subscription.halted', 'payment.failed'}:
                 case = build_case(payload)
                 pipeline.process(case)
+            elif event_type in {'payment_link.paid', 'payment.captured', 'invoice.paid', 'order.paid', 'payment_link.cancelled', 'payment_link.expired'}:
+                from app.execution.reconciliation import reconcile_webhook_event
+                reconcile_webhook_event(payload, event_id=row['event_id'])
             mark_webhook_processed(row['event_id'], datetime.now(timezone.utc).isoformat())
         except Exception as exc:
             mark_webhook_failed(row['event_id'], repr(exc))

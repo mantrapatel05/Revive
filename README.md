@@ -28,20 +28,33 @@ REVIVE formulates subscription recovery as a constrained causal decision problem
             ▼
 [ Incremental Economic Optimization ]
     ├─ Baseline: Delta(Action) = E[Net(Action)] - E[Net(WAIT)]
-    ├─ Merchant Risk Margin: Risk Adjustment (z * sigma)
+    ├─ Dynamic Merchant Risk Tuning: Risk Margin (z * sigma)
     └─ Customer Fatigue Penalty: -lambda * ContactCount
             │
-            ▼
+            ▼ 
 [ Deterministic Policy Governance Gate ]
-    ├─ Hard Constraints: Opt-Outs, Amount Ceilings, Native Retry Collisions
+    ├─ Hard Invariants: Opt-Outs, Amount Ceilings, Native Retry Collisions
+    ├─ Merchant Dynamic Limits: require_human_above, max_auto_action_amount
     └─ Feasibility Mask: [ WAIT, NUDGE, MANUAL_RECOVERY, ESCALATE ]
             │
             ▼
-[ Execution & Reconciliation Subsystem ]
-    ├─ Version-Validated Authorization Token
+[ REVIVE Execution Subsystem ]
+    ├─ Version-Validated Authorization Token (TTL: 300s)
     ├─ Circuit Breaker Protection (Closed / Half-Open / Open)
-    ├─ Live Razorpay Test Mode Executor (POST /v1/payment_links)
-    └─ Durable Transactional Outbox & Reconciler
+    ├─ Razorpay Test Mode Payment Link Creation (POST /v1/payment_links)
+    └─ Execution State: EXECUTION_REQUESTED (Initial State: PAYMENT_PENDING)
+            │
+            ▼
+[ Customer / External Payment Completion ]
+            │
+            ▼
+[ Razorpay Provider Event / Webhook Ingestion ]
+            │
+            ▼
+[ Reconciliation & Verification Subsystem ]
+    ├── CONFIRMED (Provider Evidence Proves Payment Success)
+    ├── FAILED (Provider Evidence Proves Expiry / Cancellation)
+    └── UNKNOWN (API Timeout / Ambiguity — Never Inferred)
             │
             ▼
 [ SQLite Decision Store & Append-Only Audit Logger ]
@@ -55,6 +68,7 @@ REVIVE formulates subscription recovery as a constrained causal decision problem
 - **Architecture**: Action-specific T-Learner built on an 8-fold bootstrap ensemble of logistic regression estimators.
 - **Uncertainty Tracking**: Computes both predictive mean $P(\text{Recovery} \mid a)$ and epistemic uncertainty $\sigma(a)$ across all actions: `WAIT`, `NUDGE`, `MANUAL_RECOVERY`, `ESCALATE`.
 - **Isotonic Calibration**: Employs Out-of-Bag (OOB) isotonic regression mapping to ensure predicted probabilities match empirical observation frequencies across the entire risk surface.
+- **Calibration Curves**: Diagnostic calibration analysis across actions with Brier score quantification (`scripts/evaluate_calibration.py`).
 
 ### 2. Incremental Economic Objective Formulation
 - **Marginal Net Value**: Decisions optimize incremental net yield over the counterfactual baseline (`WAIT`), preventing unnecessary interventions on subscriptions that would have recovered natively:
@@ -66,16 +80,28 @@ REVIVE formulates subscription recovery as a constrained causal decision problem
 - **Hard Constraint Boundaries**: Interventions are strictly constrained by business rules that supersede model recommendations:
   - Immediate escalation for customer opt-outs (`customer_opted_out == True`).
   - Prohibition of automated intervention during active native retries (`native_retry_scheduled == True`).
-  - Mandatory human approval for transactions exceeding merchant risk thresholds (INR 5,000.00).
+  - Strict human review escalation for high-value transactions (`amount > require_human_above`).
+  - Automatic ceiling enforcement on automated interventions (`amount > max_auto_action_amount`).
 - **Adversarial Integrity**: Verified 0 unsafe automated actions across 100 synthetic adversarial stress tests.
 
-### 4. Enterprise Execution & Reliability Architecture
+### 4. Enterprise Execution, Idempotency & Provider Reconciliation
 - **Cryptographic Webhook Ingestion**: Authentic HMAC-SHA256 signature verification over incoming payloads using `RAZORPAY_WEBHOOK_SECRET`.
 - **Strict Ingestion Idempotency**: Atomic SQLite transaction locking ensures duplicate webhook deliveries receive HTTP 200 confirmations without duplicate downstream processing or secondary payment link creation.
-- **Live Razorpay Test Mode Execution**: Real API integration creating hosted Payment Links (`POST /v1/payment_links`) in Razorpay Test Mode for `MANUAL_RECOVERY` workflows.
+- **Razorpay Test Mode Recovery Action**: REVIVE can create a real Razorpay Test Mode Payment Link as the recovery action. Creation of the link is not treated as proof of payment recovery; final recovery state is established from subsequent provider evidence.
+- **Explicit Lifecycle State Machine**:
+  - `EXECUTION_REQUESTED`: Razorpay accepted creation of the actionable Payment Link.
+  - `PAYMENT_PENDING`: Payment Link exists but customer payment completion has not yet been observed.
+  - `CONFIRMED`: Razorpay webhook or API inquiry evidence proves payment succeeded.
+  - `FAILED`: Razorpay evidence proves payment cancelled, expired, or failed.
+  - `UNKNOWN`: Provider truth cannot currently be established (fail-safe; never silently retried).
 - **Runtime Authorization & Version Gate**: Strict validation of `ExecutionAuthorization` tokens verifying non-expired TTLs and exact matching of active `policy_version` and `model_version` before execution.
 - **Fault-Tolerant Circuit Breaker**: State-machine circuit breaker with configurable failure thresholds ($N=3$), probe request gating in `HALF_OPEN` state, and exponential backoff recovery.
 - **Live Distribution Shift Interception**: In-memory drift detection over 13 numeric features; automatically halts automated execution and routes anomalous vectors ($z > 3.0$ or boundary violations) straight to human escalation.
+
+### 5. Compliant Escalation & Merchant Configurability
+- **Transactional Human Approval Queue**: Escalated cases are durably stored in `approval_queue` and exposed via `GET /api/approvals/pending` and `POST /api/approvals/{id}/resolve` with full reviewer attribution.
+- **Dynamic Merchant Policy Tuning**: Active merchant parameters are stored in SQLite (`merchant_config` table) and dynamically synchronized via `GET /api/merchant-config` and `PUT /api/merchant-config` without requiring server restarts.
+- **Decision Audit Receipts**: Cryptographic verifiable receipts generated on demand (`GET /receipt/{case_id}`) with transaction HMAC validation and settlement details.
 
 ---
 
@@ -99,7 +125,7 @@ Theoretical Oracle      248,235.15                  264,436.60
 Safe Policy Capture:    93.67% (Deterministic across seeds; 97.45% under zero-fatigue baseline)
 Mean Decision Regret:   INR 2.93 per case
 Adversarial Failures:   0 / 100 unsafe automated actions
-Unit & Integration Test Coverage: 22 passed, 0 failed, 0 xfailed
+Unit & Integration Test Coverage: 32 passed, 0 failed, 0 xfailed (100%)
 ========================================================================================
 ```
 
@@ -115,13 +141,11 @@ To maintain complete architectural integrity, the current implementation acknowl
 
 1. **Synthetic Counterfactual Calibration vs. Production Customer Elasticity**:
    - The causal model is trained against a calibrated synthetic simulator modeling subscription transition dynamics. Real-world consumer elasticity to nudges and manual recovery links will exhibit distribution variance that requires ongoing production recalibration.
-2. **Razorpay Test Mode Execution Scope**:
-   - Live execution in Test Mode creates authentic hosted Payment Links (`POST /v1/payment_links`) and validates invoice/subscription statuses via live REST endpoints. Automated recurring card re-authorization without customer 3DS intervention is not supported in Razorpay Test Mode sandbox environments.
+2. **Razorpay Test Mode Execution Scope & Recovery Semantics**:
+   - Live execution in Test Mode creates authentic hosted Payment Links (`POST /v1/payment_links`) and validates invoice/subscription statuses via live REST endpoints. Payment Link creation initiates an actionable payment request (`EXECUTION_REQUESTED` with state `PAYMENT_PENDING`); it is not treated as proof of payment recovery. Final recovery state (`CONFIRMED`) is strictly established from subsequent provider evidence (webhooks or reconciliation inquiry). Automated recurring card re-authorization without customer 3DS intervention is not supported in Razorpay Test Mode sandbox environments.
 3. **Single-Node Embedded Storage**:
    - The persistence layer utilizes embedded SQLite (`revive.db`) with Write-Ahead Logging (WAL). While suitable for single-node deployments and low-to-medium volume processing (< 500 events/sec), enterprise multi-region scale requires migration to distributed transactional datastores (e.g., PostgreSQL with distributed Redis/Kafka locks).
-4. **Communication Channel Mocking**:
-   - The `MANUAL_RECOVERY` path generates verified Razorpay Payment Links. The `NUDGE` path is currently isolated to a simulated communication dispatcher rather than an integrated SMS/WhatsApp carrier gateway (e.g., Twilio, Gupshup, Meta Cloud API).
-5. **Offline Batch Retraining Boundary**:
+4. **Offline Batch Retraining Boundary**:
    - Model parameters are fit via offline batch retraining (`scripts/train_model.py`). Online real-time policy updates via contextual bandits or continuous reinforcement learning are not currently active in the core execution path.
 
 ---
@@ -132,7 +156,8 @@ To maintain complete architectural integrity, the current implementation acknowl
 - [ ] **Multi-Gateway Abstraction Layer**: Generalize the execution adapter to unify Razorpay, Stripe Billing, Adyen, and Chargebee under a vendor-agnostic recovery protocol.
 - [ ] **Multi-Touch Customer Fatigue Kernels**: Implement exponential decay kernels tracking customer interaction frequency across omnichannel touchpoints (Email, SMS, WhatsApp, In-App).
 - [ ] **Safe Off-Policy Contextual Bandits**: Deploy continuous contextual bandits with safe Thompson Sampling operating strictly within deterministic policy guardrails.
-- [ ] **Automated Human Approval Workflows**: Implement webhooks dispatching pending high-value approval requests directly to merchant Slack/Teams channels with interactive signing tokens.
+- [x] **Human Approval Queue & Escalation Management**: Implemented transactional approval queue with live API and dashboard resolution controls.
+- [x] **Dynamic Merchant Configuration**: Implemented database-backed policy and risk configuration with hot-reload pipeline synchronization.
 
 ---
 
@@ -193,25 +218,34 @@ Access the financial operations terminal at `http://localhost:8000`.
 These suites validate safety bounds, reliability mechanics, and gateway integrations:
 
 ```bash
-# 1. Execute full unit and reliability test suite (22 tests)
+# 1. Execute full unit and reliability test suite (26 tests)
 pytest -v
 
 # 2. Run reliability circuit breaker and authorization TTL drills
 pytest tests/test_reliability_drills.py -v
 
-# 3. Execute 100 adversarial stress cases (verifies 0 unsafe actions)
+# 3. Run peak feature and integration additions (approvals, config, receipts)
+pytest tests/test_peak_additions.py -v
+
+# 4. Execute 100 adversarial stress cases (verifies 0 unsafe actions)
 python scripts/run_adversarial.py
 
-# 4. Verify deterministic policy boundary invariants
+# 5. Verify deterministic policy boundary invariants
 python scripts/run_property_tests.py
 
-# 5. Rehearse live webhook failure ingestion & idempotency lock
+# 6. Evaluate model calibration curves and Brier scores
+python scripts/evaluate_calibration.py
+
+# 7. Evaluate merchant utility risk profiles
+python scripts/evaluate_utility_profiles.py
+
+# 8. Rehearse live webhook failure ingestion & idempotency lock
 python scripts/rehearse_failure_injection.py
 
-# 6. Run Doubly Robust Off-Policy Evaluation (OPE)
+# 9. Run Doubly Robust Off-Policy Evaluation (OPE)
 python scripts/evaluate_ope.py
 
-# 7. Execute live Razorpay Test Mode lifecycle smoke test (requires test keys in .env)
+# 10. Execute live Razorpay Test Mode lifecycle smoke test (requires test keys in .env)
 python scripts/test_razorpay_lifecycle.py
 ```
 

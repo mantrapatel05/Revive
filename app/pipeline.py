@@ -210,18 +210,58 @@ class RecoveryPipeline:
             execution = self._execute_live(case, best_action, feasible)
             # Update best_action if _execute_live downgraded it (e.g. missing creds)
             best_action = execution.action
+            execution_status = execution.status
+            if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
+                final_state = {"state": "PAYMENT_PENDING", "reason": "payment_not_yet_observed"}
+            elif best_action == "WAIT":
+                final_state = {"state": "NO_ACTION", "reason": "waiting_for_native_retry"}
+            elif best_action == "ESCALATE":
+                final_state = {"state": "QUEUED", "reason": "queued_for_human_review"}
+            else:
+                final_state = {"state": "UNKNOWN", "reason": "unknown_action"}
         else:
             # --- Synthetic benchmark path (or preview path) ---
             execution = self.simulator.execute(case, best_action)
+            execution_status = "SUCCESS" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILURE")
+            final_state = {"state": "CONFIRMED" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILED"), "source": "simulator"}
 
         if best_action == "MANUAL_RECOVERY" and not is_preview:
-            self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
+            if is_live:
+                self.circuit_breaker.record_success() if execution.status == "EXECUTION_REQUESTED" else self.circuit_breaker.record_failure()
+            else:
+                self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
+
+        decision_id = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
 
         authorization = None
         intent_id = None
-        if best_action == "MANUAL_RECOVERY" and not is_preview:
-            authorization = ExecutionAuthorization.create(case["event_id"], best_action, versions()["policy_version"], versions()["model_version"])
-            intent_id = enqueue_execution_intent(authorization, {"case": case, "authorization": authorization.__dict__})
+        if best_action in {"MANUAL_RECOVERY", "NUDGE"} and not is_preview:
+            authorization = ExecutionAuthorization.create(
+                case["event_id"],
+                best_action,
+                versions()["policy_version"],
+                versions()["model_version"],
+                decision_id=decision_id,
+            )
+            intent_payload = {
+                "case": case,
+                "authorization": authorization.__dict__,
+                "payment_link_id": getattr(execution, "payment_link_id", None),
+                "payment_link_url": getattr(execution, "payment_link_url", None),
+            }
+            intent_id = enqueue_execution_intent(authorization, intent_payload)
+            if is_live:
+                from app.execution.outbox import mark_intent_status
+                mark_intent_status(
+                    intent_id,
+                    execution.status,
+                    {
+                        "status": execution.status,
+                        "payment_link_id": getattr(execution, "payment_link_id", None),
+                        "payment_link_url": getattr(execution, "payment_link_url", None),
+                        "final_state": final_state,
+                    },
+                )
 
         if is_live and not is_preview:
             wait_net = 0.0  # No simulator counterfactual for live cases
@@ -261,6 +301,16 @@ class RecoveryPipeline:
                 payload=escalation_payload,
             )
 
+        execution_res_dict = {
+            "status": execution.status if is_live else ("SUCCESS" if execution.success else "FAILURE"),
+            "action": best_action,
+            "payment_link_id": getattr(execution, "payment_link_id", None),
+            "payment_link_url": getattr(execution, "payment_link_url", None),
+            "provider": getattr(execution, "provider", "razorpay" if is_live else "simulator"),
+            "provider_response": getattr(execution, "provider_response", None),
+            "detail": getattr(execution, "detail", ""),
+        }
+
         decision = {
             "event_id": case["event_id"],
             "case_id": case["event_id"],
@@ -284,7 +334,11 @@ class RecoveryPipeline:
             "policy_checks": ([c.__dict__ for c in feasibility[rec_action].checks] if (best_action != rec_action and rec_action in feasibility and feasibility[rec_action].checks) else ([c.__dict__ for c in feasibility[best_action].checks] if best_action in feasibility else [])),
             "blocked_reasons": {a: feasibility[a].reasons for a in feasibility if feasibility[a].reasons},
             "all_policy_checks": {a: [c.__dict__ for c in feasibility[a].checks] for a in feasibility},
-            "execution_status": "SUCCESS" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILURE"),
+            "execution_status": execution_status,
+            "execution_result": execution_res_dict,
+            "final_state": final_state,
+            "payment_link_id": getattr(execution, "payment_link_id", None),
+            "payment_link_url": getattr(execution, "payment_link_url", None),
             "recovered_amount": execution.recovered_amount,
             "intervention_cost": execution.cost,
             "net_recovered": net,
