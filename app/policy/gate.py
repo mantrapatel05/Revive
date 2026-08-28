@@ -1,5 +1,61 @@
 from dataclasses import dataclass, field
+from datetime import datetime, time, timezone, timedelta
 from typing import Any, Dict, List, Optional
+
+IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+
+def check_quiet_hours(action: str, current_time: Optional[datetime] = None) -> tuple[bool, Optional[str]]:
+    """
+    Pure function checking if a customer-facing action is permitted under IST quiet hours (08:00–19:00 IST).
+    Reject any action in {NUDGE, MANUAL_RECOVERY} if current IST time is outside 08:00–19:00.
+    Block reason must be the literal string 'outside_quiet_hours'.
+    WAIT and ESCALATE are never blocked by quiet hours.
+    """
+    if action not in {"NUDGE", "MANUAL_RECOVERY"}:
+        return True, None
+
+    if current_time is None:
+        current_time = datetime.now(IST_TIMEZONE)
+    elif isinstance(current_time, str):
+        try:
+            current_time = datetime.fromisoformat(current_time)
+        except Exception:
+            current_time = datetime.now(IST_TIMEZONE)
+
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=IST_TIMEZONE)
+    else:
+        current_time = current_time.astimezone(IST_TIMEZONE)
+
+    t = current_time.time()
+    start_time = time(8, 0, 0)
+    end_time = time(19, 0, 0)
+
+    if start_time <= t < end_time or (t == end_time and current_time.microsecond == 0):
+        return True, None
+    return False, "outside_quiet_hours"
+
+
+def check_daily_contact_cap(case: Dict[str, Any], action: str) -> tuple[bool, Optional[str]]:
+    """
+    Pure function checking if a customer-facing action violates the daily frequency cap.
+    Reject any customer-facing action in {NUDGE, MANUAL_RECOVERY} if customer has already been contacted today.
+    Block reason must be the literal string 'daily_contact_cap'.
+    WAIT and ESCALATE are never blocked.
+    """
+    if action not in {"NUDGE", "MANUAL_RECOVERY"}:
+        return True, None
+
+    contacted_today = (
+        bool(case.get("contacted_today", False))
+        or int(case.get("contacts_today", 0)) > 0
+        or int(case.get("contact_count_today", 0)) > 0
+        or bool(case.get("already_contacted_today", False))
+    )
+    if contacted_today:
+        return False, "daily_contact_cap"
+    return True, None
 
 
 @dataclass
@@ -44,10 +100,29 @@ class PolicyGate:
         )
 
     def evaluate_action(self, case: Dict[str, Any], action: str, probability_mean: float,
-                        native_retry_scheduled: bool = False) -> PolicyResult:
+                        native_retry_scheduled: bool = False, current_time: Optional[datetime] = None) -> PolicyResult:
         checks: List[PolicyCheck] = []
         hard: List[str] = []
         soft: List[str] = []
+
+        # Resolve current evaluation time (if not provided, check case or default)
+        eval_time = current_time or case.get("current_time") or case.get("eval_time")
+        if eval_time is None and not case.get("is_live", False):
+            # For offline/benchmark evaluations without explicit time, default to noon IST (permitted window)
+            now_dt = datetime.now(IST_TIMEZONE)
+            eval_time = now_dt.replace(hour=12, minute=0, second=0, microsecond=0)
+
+        # 1. QUIET_HOURS check
+        quiet_ok, quiet_reason = check_quiet_hours(action, eval_time)
+        checks.append(PolicyCheck("TIME-QUIET-001", "Contact within permitted communication hours (08:00-19:00 IST)", quiet_ok, True, {"action": action, "eval_time": str(eval_time)}))
+        if not quiet_ok and quiet_reason:
+            hard.append(quiet_reason)
+
+        # 2. DAILY_FREQUENCY_CAP check
+        daily_ok, daily_reason = check_daily_contact_cap(case, action)
+        checks.append(PolicyCheck("FREQ-DAILY-001", "Customer daily communication frequency cap (max 1 contact per calendar day)", daily_ok, True, {"action": action, "contacted_today": not daily_ok}))
+        if not daily_ok and daily_reason:
+            hard.append(daily_reason)
 
         state = case.get("subscription_status", "unknown")
         state_ok = state in {"pending", "halted"}
@@ -107,18 +182,18 @@ class PolicyGate:
             return PolicyResult("BLOCKED", None, checks, hard, soft, "P-BLOCK")
         return PolicyResult("APPROVED", action, checks, hard, soft, "P-APPROVE")
 
-    def feasible(self, case: Dict[str, Any], predictions: Dict[str, Dict[str, Any]], native_retry_scheduled: bool = False) -> Dict[str, PolicyResult]:
+    def feasible(self, case: Dict[str, Any], predictions: Dict[str, Dict[str, Any]], native_retry_scheduled: bool = False, current_time: Optional[datetime] = None) -> Dict[str, PolicyResult]:
         out: Dict[str, PolicyResult] = {}
         for action in ["WAIT", "NUDGE", "MANUAL_RECOVERY"]:
             raw = predictions.get(action, {})
             prob = float(raw.get("mean", 0.0)) if isinstance(raw, dict) else float(raw)
-            out[action] = self.evaluate_action(case, action, prob, native_retry_scheduled)
+            out[action] = self.evaluate_action(case, action, prob, native_retry_scheduled, current_time=current_time)
         # ESCALATE is always a valid safety outcome.
         out["ESCALATE"] = PolicyResult("APPROVED", "ESCALATE", [], [], [], "P-ALWAYS-ALLOWED")
         return out
 
-    def evaluate(self, case: Dict[str, Any], action: str, probability: float, native_retry_scheduled: bool = False) -> PolicyResult:
-        result = self.evaluate_action(case, action, float(probability), native_retry_scheduled)
+    def evaluate(self, case: Dict[str, Any], action: str, probability: float, native_retry_scheduled: bool = False, current_time: Optional[datetime] = None) -> PolicyResult:
+        result = self.evaluate_action(case, action, float(probability), native_retry_scheduled, current_time=current_time)
         if result.decision == "APPROVED":
             return result
         fallback = "WAIT" if case.get("subscription_status") == "pending" and native_retry_scheduled else "ESCALATE"

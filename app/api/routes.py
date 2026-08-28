@@ -13,6 +13,83 @@ router = APIRouter()
 def health():
     return {'status': 'ok', 'service': 'revive', 'version': '6.0'}
 
+@router.get('/api/policy-spec')
+def policy_spec():
+    spec_path = Path(__file__).resolve().parents[2] / 'docs/POLICY_SPEC.md'
+    content = spec_path.read_text(encoding='utf-8') if spec_path.exists() else ""
+    return {
+        "title": "REVIVE 6.0 — Deterministic Policy Specification",
+        "raw_markdown": content,
+        "hard_constraints": [
+            {
+                "check_id": "TIME-QUIET-001",
+                "name": "Quiet Hours Compliance",
+                "logic": "08:00 <= current_time_IST < 19:00",
+                "enforcement": "Rejects NUDGE and MANUAL_RECOVERY outside 08:00–19:00 IST with outside_quiet_hours; WAIT allowed"
+            },
+            {
+                "check_id": "FREQ-DAILY-001",
+                "name": "Daily Frequency Cap",
+                "logic": "case.contacted_today == False",
+                "enforcement": "Rejects NUDGE and MANUAL_RECOVERY on same-day repeat touches with daily_contact_cap; WAIT allowed"
+            },
+            {
+                "check_id": "CUST-OPT-001",
+                "name": "Customer Opt-Out Compliance",
+                "logic": "case.customer_opted_out == False",
+                "enforcement": "Blocks NUDGE and MANUAL_RECOVERY immediately; routes to WAIT or ESCALATE"
+            },
+            {
+                "check_id": "SUB-STATE-001",
+                "name": "Eligible Subscription State",
+                "logic": "case.subscription_status in {'pending', 'halted'}",
+                "enforcement": "Blocks automated recovery on canceled/terminated subscriptions"
+            },
+            {
+                "check_id": "WAIT-STATE-001",
+                "name": "Native Retry Eligibility",
+                "logic": "case.subscription_status == 'pending'",
+                "enforcement": "Forbids WAIT if subscription is already halted (no native retry exists)"
+            },
+            {
+                "check_id": "FIN-AUTO-002",
+                "name": "Automatic Action Ceiling",
+                "logic": "case.amount <= merchant_config.max_auto_action_amount",
+                "enforcement": "Blocks automated outreach on high-value transactions; mandates human escalation"
+            },
+            {
+                "check_id": "RET-LIMIT-001",
+                "name": "Attempt Budget Limit",
+                "logic": "case.attempt_number < 4",
+                "enforcement": "Blocks additional automated retry attempts after 4 failed cycles"
+            },
+            {
+                "check_id": "INV-ELIG-001",
+                "name": "Invoice Chargeability",
+                "logic": "case.invoice_status == 'issued'",
+                "enforcement": "Forbids manual charge paths on draft, paid, or voided invoices"
+            },
+            {
+                "check_id": "PM-ELIG-001",
+                "name": "Payment Method Support",
+                "logic": "case.payment_method_type != 'domestic_card'",
+                "enforcement": "Rejects manual recovery attempts on domestic cards requiring step-up 2FA"
+            },
+            {
+                "check_id": "DUP-NATIVE-001",
+                "name": "Native Retry Collision",
+                "logic": "case.native_retry_scheduled == False",
+                "enforcement": "Blocks manual charging when gateway has active retry scheduled"
+            },
+            {
+                "check_id": "PROB-MIN-001",
+                "name": "Minimum Probability Floor",
+                "logic": "P_cal(MANUAL_RECOVERY) >= 0.20",
+                "enforcement": "Rejects low-probability manual outreach where cost exceeds recovery likelihood"
+            }
+        ]
+    }
+
 @router.get('/api/evaluation')
 def evaluation():
     p = RESULTS_DIR / 'final_results.json'

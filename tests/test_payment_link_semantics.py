@@ -85,6 +85,7 @@ def test_payment_link_creation_is_not_recovery(tmp_path, monkeypatch):
         "customer_opted_out": False,
         "native_retry_scheduled": False,
         "is_live": True,
+        "current_time": "2026-08-28T12:00:00+05:30",
     }
 
     # Execute manual recovery action directly
@@ -134,6 +135,7 @@ def test_successful_payment_event_confirms_recovery(tmp_path, monkeypatch):
         "customer_opted_out": False,
         "native_retry_scheduled": False,
         "is_live": True,
+        "current_time": "2026-08-28T12:00:00+05:30",
     }
 
     # Process initial case and establish payment link
@@ -281,6 +283,7 @@ def test_audit_distinguishes_execution_from_final_state(tmp_path, monkeypatch):
         "customer_opted_out": False,
         "native_retry_scheduled": False,
         "is_live": True,
+        "current_time": "2026-08-28T12:00:00+05:30",
     }
 
     decision = pipeline.process(case)
@@ -325,6 +328,7 @@ def test_manual_recovery_does_not_claim_immediate_recovery(tmp_path, monkeypatch
         "customer_opted_out": False,
         "native_retry_scheduled": False,
         "is_live": True,
+        "current_time": "2026-08-28T12:00:00+05:30",
     }
 
     # 1. Direct executor invocation for MANUAL_RECOVERY
