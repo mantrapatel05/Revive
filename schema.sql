@@ -92,3 +92,24 @@ CREATE TABLE IF NOT EXISTS merchant_config (
     config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 7. Role-Based Access Control (RBAC) & Engine-Enforced Append-Only Audit
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'revive_app') THEN
+        CREATE ROLE revive_app LOGIN PASSWORD 'revive_app_password';
+    END IF;
+END
+$$;
+
+GRANT CONNECT ON DATABASE revive TO revive_app;
+GRANT USAGE ON SCHEMA public TO revive_app;
+
+-- Full read/write permissions on operational state tables
+GRANT SELECT, INSERT, UPDATE, DELETE ON webhook_events, decision_records, execution_intents, approval_queue, merchant_config TO revive_app;
+
+-- Strict append-only enforcement: INSERT and SELECT only (NO UPDATE, NO DELETE granted)
+GRANT SELECT, INSERT ON audit_logs TO revive_app;
+
+-- Sequence usage permissions for BIGSERIAL generation
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO revive_app;
