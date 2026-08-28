@@ -82,7 +82,15 @@ def main():
         summary[name]={'mean_expected_net':float(np.mean(vals)),'std_expected_net':float(np.std(vals)),'mean_realized_net':float(np.mean(realized)),'std_realized_net':float(np.std(realized))}
     native=summary['native']['mean_expected_net']; revive=summary['revive']['mean_expected_net']; constrained=summary['constrained_oracle']['mean_expected_net']
     capture=(revive-native)/(constrained-native) if constrained>native else 0.0
-    output={'seeds':SEEDS,'case_count':len(cases),'summary':summary,'safe_policy_capture':float(capture),'mean_decision_regret':float(np.mean([runs[s]['mean_decision_regret'] for s in runs])),'mean_policy_avoided_upside':float(np.mean([runs[s]['policy_avoided_upside'] for s in runs])),'risk_mode':'BALANCED'}
+
+    from app.diagnosis import diagnose
+    diag_results = [diagnose(c) for c in cases]
+    rule_count = sum(1 for d in diag_results if d.get("source") == "rule")
+    llm_count = sum(1 for d in diag_results if d.get("source") in ("llm", "llm_failed"))
+    pct_rule = (rule_count / len(cases)) * 100 if cases else 100.0
+    pct_llm = (llm_count / len(cases)) * 100 if cases else 0.0
+
+    output={'seeds':SEEDS,'case_count':len(cases),'summary':summary,'safe_policy_capture':float(capture),'mean_decision_regret':float(np.mean([runs[s]['mean_decision_regret'] for s in runs])),'mean_policy_avoided_upside':float(np.mean([runs[s]['policy_avoided_upside'] for s in runs])),'risk_mode':'BALANCED','diagnosis_coverage':{'rule_pct':round(pct_rule,2),'llm_pct':round(pct_llm,2),'rule_count':rule_count,'llm_count':llm_count,'total_cases':len(cases)}}
     RESULTS_DIR.mkdir(parents=True,exist_ok=True); (RESULTS_DIR/'final_results.json').write_text(json.dumps(output,indent=2))
     print('REVIVE EXPECTED-VALUE EVALUATION')
     for k,v in summary.items():
@@ -91,4 +99,5 @@ def main():
         except UnicodeEncodeError:
             print(f'{k:20s} expected INR {v["mean_expected_net"]:,.2f} +/- INR {v["std_expected_net"]:,.2f} | realized INR {v["mean_realized_net"]:,.2f}')
     print(f'Safe Policy Capture: {capture*100:.2f}%')
+    print(f'Diagnosis Coverage: {pct_rule:.1f}% rule / {pct_llm:.1f}% llm')
 if __name__=='__main__': main()

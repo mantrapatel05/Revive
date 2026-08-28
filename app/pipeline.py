@@ -16,6 +16,7 @@ from app.db import init_db
 from app.approval import create_approval_request
 from app.config import DATA_DIR
 from app.monitoring.drift import DriftDetector
+from app.diagnosis import diagnose
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,11 @@ class RecoveryPipeline:
                     "[DRIFT] Distribution shift detected for live case %s: %s — routing straight to ESCALATE",
                     case.get("event_id"), drift_res.get("drifted_features"),
                 )
+
+        # 2.5 Decline Diagnosis (Deterministic rule table + Groq LLM fallback)
+        diagnosis = diagnose(case)
+        case["diagnosis"] = diagnosis
+        case["decline_class"] = diagnosis.get("decline_class", "soft")
 
         if distribution_shift_flagged:
             # When out-of-distribution, ML recovery estimates lack empirical support.
@@ -350,6 +356,7 @@ class RecoveryPipeline:
             "authorization": authorization.__dict__ if authorization else None,
             "distribution_shift_flagged": distribution_shift_flagged,
             "drift_details": drift_details,
+            "diagnosis": diagnosis,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **versions(),
         }

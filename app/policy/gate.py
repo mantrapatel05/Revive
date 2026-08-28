@@ -137,6 +137,12 @@ class PolicyGate:
                 hard.append("Native retry is not available in halted state")
 
         if action in {"NUDGE", "MANUAL_RECOVERY"}:
+            decline_class = case.get("decline_class") or (case.get("diagnosis", {}).get("decline_class") if isinstance(case.get("diagnosis"), dict) else None)
+            risk_free = decline_class not in {"risk", "risk_decline"}
+            checks.append(PolicyCheck("RISK-DECLINE-001", "Decline reason is free from fraud or compliance risk", risk_free, True, {"decline_class": decline_class}))
+            if not risk_free:
+                hard.append("Decline flagged as risk or suspected fraud")
+
             opted_out = bool(case.get("customer_opted_out", False))
             checks.append(PolicyCheck("CUST-OPT-001", "Customer has not opted out", not opted_out, True, {"opted_out": opted_out}))
             if opted_out:
