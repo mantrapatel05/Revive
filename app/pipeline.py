@@ -17,6 +17,7 @@ from app.approval import create_approval_request
 from app.config import DATA_DIR
 from app.monitoring.drift import DriftDetector
 from app.diagnosis import diagnose
+from app.messaging import generate_message
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +232,24 @@ class RecoveryPipeline:
             execution_status = "SUCCESS" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILURE")
             final_state = {"state": "CONFIRMED" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILED"), "source": "simulator"}
 
+        # Post-Governor Message Generation for authorized customer-facing actions
+        generated_message = None
+        if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
+            diag_class = case.get("decline_class") or (case.get("diagnosis", {}).get("decline_class") if isinstance(case.get("diagnosis"), dict) else "soft")
+            link_url = getattr(execution, "payment_link_url", None) or f"https://rzp.io/rzp/{case.get('event_id', 'pay')}"
+            generated_message = generate_message(case, best_action, diag_class, payment_link=link_url)
+
+            # Tone-safety fail closed
+            if not generated_message.get("tone_check_passed", True):
+                logger.warning(
+                    "[TONE_GUARD] Message tone check failed for case %s: %s — routing to ESCALATE",
+                    case.get("event_id"), generated_message.get("violations")
+                )
+                best_action = "ESCALATE"
+                if is_live and not is_preview:
+                    final_state = {"state": "QUEUED", "reason": "blocked_by_tone_check"}
+                    execution_status = "BLOCKED_TONE_CHECK"
+
         if best_action == "MANUAL_RECOVERY" and not is_preview:
             if is_live:
                 self.circuit_breaker.record_success() if execution.status == "EXECUTION_REQUESTED" else self.circuit_breaker.record_failure()
@@ -254,6 +273,7 @@ class RecoveryPipeline:
                 "authorization": authorization.__dict__,
                 "payment_link_id": getattr(execution, "payment_link_id", None),
                 "payment_link_url": getattr(execution, "payment_link_url", None),
+                "generated_message": generated_message,
             }
             intent_id = enqueue_execution_intent(authorization, intent_payload)
             if is_live:
@@ -357,6 +377,7 @@ class RecoveryPipeline:
             "distribution_shift_flagged": distribution_shift_flagged,
             "drift_details": drift_details,
             "diagnosis": diagnosis,
+            "generated_message": generated_message,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **versions(),
         }
