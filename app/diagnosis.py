@@ -174,22 +174,26 @@ def llm_diagnose_fallback(event: Dict[str, Any], raw_reason: str) -> Dict[str, A
         }
 
     except ValidationError as val_err:
-        logger.error("[DIAGNOSIS_AUDIT] LLM Output Pydantic validation failed: %s | Raw response: %s", val_err, locals().get("raw_text", "None"))
+        raw_out = locals().get("raw_text") or (json.dumps(locals().get("parsed")) if "parsed" in locals() else None)
+        logger.error("[DIAGNOSIS_AUDIT] LLM Output Pydantic validation failed: %s | Raw response: %s", val_err, raw_out)
         return {
             "decline_class": "unclear",
             "reason": raw_reason,
             "source": "llm_failed",
             "confidence": 0.0,
             "reasoning": f"LLM schema validation failure: {str(val_err)}",
+            "raw_llm_output": raw_out,
         }
     except Exception as exc:
-        logger.error("[DIAGNOSIS_AUDIT] LLM request error: %s | Raw response: %s", exc, locals().get("raw_text", "None"))
+        raw_out = locals().get("raw_text", None)
+        logger.error("[DIAGNOSIS_AUDIT] LLM request error: %s | Raw response: %s", exc, raw_out)
         return {
             "decline_class": "unclear",
             "reason": raw_reason,
             "source": "llm_failed",
             "confidence": 0.0,
             "reasoning": f"LLM invocation failed: {str(exc)}",
+            "raw_llm_output": raw_out,
         }
 
 

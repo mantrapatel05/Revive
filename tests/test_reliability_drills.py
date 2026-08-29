@@ -111,3 +111,164 @@ def test_model_policy_version_mismatch_blocked():
     # This should block or escalate due to version mismatch, but currently executes/approves:
     assert decision["chosen_action"] == "ESCALATE"
     assert decision["execution_status"] in ("BLOCKED", "NO_RECOVERY")
+
+
+def test_malformed_llm_output_fails_closed_and_preserves_audit(tmp_path, monkeypatch):
+    """Scenario 1: Malformed LLM response fails closed to ESCALATE, preserves raw output in audit, and batch loop continues."""
+    import json
+    from unittest.mock import MagicMock, patch
+    from app import config
+    import app.db as db
+    from app.pipeline import RecoveryPipeline
+    from app.execution.simulator import SubscriptionSimulator
+
+    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_malformed.db")
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_malformed.db")
+    db.init_db()
+
+    pipeline = RecoveryPipeline(simulator=SubscriptionSimulator(42))
+    raw_bad_json = '{"decline_class": "invented_sixth_category_unauthorized", "confidence": "invalid_float", "unexpected": true}'
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"choices": [{"message": {"content": raw_bad_json}}]}
+    mock_resp.raise_for_status = MagicMock()
+
+    batch = [
+        {
+            "event_id": "EVT-TEST-01-CLEAN",
+            "customer_name": "Customer 1",
+            "amount": 1999.0,
+            "subscription_status": "pending",
+            "invoice_status": "issued",
+            "payment_method_type": "international_card",
+            "failure_reason": "insufficient_funds",
+            "attempt_number": 2,
+            "contact_count_7d": 1,
+            "customer_opted_out": False,
+            "native_retry_scheduled": False,
+            "current_time": "2026-08-29T12:00:00+05:30",
+        },
+        {
+            "event_id": "EVT-TEST-02-MALFORMED",
+            "customer_name": "Customer 2",
+            "amount": 2499.0,
+            "subscription_status": "pending",
+            "invoice_status": "issued",
+            "payment_method_type": "international_card",
+            "failure_reason": "CUSTOM_HDFC_UNRECOGNIZED_CODE_404",
+            "attempt_number": 2,
+            "contact_count_7d": 1,
+            "customer_opted_out": False,
+            "native_retry_scheduled": False,
+            "current_time": "2026-08-29T12:00:00+05:30",
+        },
+        {
+            "event_id": "EVT-TEST-03-CLEAN",
+            "customer_name": "Customer 3",
+            "amount": 1499.0,
+            "subscription_status": "pending",
+            "invoice_status": "issued",
+            "payment_method_type": "international_card",
+            "failure_reason": "card_expired",
+            "attempt_number": 2,
+            "contact_count_7d": 1,
+            "customer_opted_out": False,
+            "native_retry_scheduled": False,
+            "current_time": "2026-08-29T12:00:00+05:30",
+        },
+    ]
+
+    results = []
+    with patch("requests.post", return_value=mock_resp):
+        with patch("app.diagnosis.GROQ_API_KEY", "mock-groq-key"):
+            for case in batch:
+                dec = pipeline.process(case, is_preview=False)
+                results.append(dec)
+
+    # 1. Assert batch processed without crashing
+    assert len(results) == 3
+
+    # 2. Assert Case 2 failed closed
+    d2 = results[1]
+    diag2 = d2["diagnosis"]
+    assert diag2["source"] == "llm_failed"
+    assert diag2["decline_class"] == "unclear"
+    assert diag2["raw_llm_output"] == raw_bad_json
+    assert "LLM schema validation failure" in diag2["reasoning"] or "LLM Output Pydantic validation failed" in str(diag2)
+
+    # 3. Assert audit log row contains diagnosis and raw bad output
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT payload_json FROM audit_logs WHERE event_id = ?", ("EVT-TEST-02-MALFORMED",)).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        assert payload["diagnosis"]["source"] == "llm_failed"
+        assert payload["diagnosis"]["raw_llm_output"] == raw_bad_json
+
+
+def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(tmp_path, monkeypatch):
+    """Scenario 2: Gateway provider down trips circuit breaker, short-circuits further calls, routes safely to ESCALATE."""
+    import json
+    from app import config
+    import app.db as db
+    from app.pipeline import RecoveryPipeline
+    from app.execution.simulator import SubscriptionSimulator
+    from app.execution.live_executor import LiveExecutor
+    from app.execution.razorpay import RazorpayAPIError
+    from app.execution.circuit_breaker import CircuitBreaker, CircuitState
+
+    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_cb_drill.db")
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_cb_drill.db")
+    db.init_db()
+
+    class MockFailingAdapter:
+        def __init__(self):
+            self.call_count = 0
+        def create_payment_link(self, *args, **kwargs):
+            self.call_count += 1
+            raise RazorpayAPIError("503 Service Unavailable: Gateway Switch Down")
+        def fetch_payment_link(self, *args, **kwargs):
+            self.call_count += 1
+            raise RazorpayAPIError("503 Service Unavailable: Gateway Switch Down")
+
+    mock_adapter = MockFailingAdapter()
+    cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60.0)
+    pipeline = RecoveryPipeline(simulator=SubscriptionSimulator(42))
+    pipeline.live_executor = LiveExecutor(adapter=mock_adapter)
+    pipeline.circuit_breaker = cb
+
+    cases = [
+        {
+            "event_id": f"EVT-CB-TEST-{i:02d}",
+            "customer_name": f"Customer {i}",
+            "amount": 2499.0,
+            "subscription_status": "pending",
+            "invoice_status": "issued",
+            "payment_method_type": "international_card",
+            "attempt_number": 2,
+            "contact_count_7d": 1,
+            "customer_opted_out": False,
+            "native_retry_scheduled": False,
+            "current_time": "2026-08-29T12:00:00+05:30",
+            "is_live": True,
+        }
+        for i in range(1, 6)
+    ]
+
+    results = [pipeline.process(c, is_preview=False) for c in cases]
+
+    # (a) Circuit Breaker transitioned to OPEN
+    assert cb.state == CircuitState.OPEN
+
+    # (b) External call count capped at 3 (requests 4 and 5 short-circuited)
+    assert mock_adapter.call_count == 3
+
+    # (c) Requests 4 & 5 routed safely without silent drops
+    assert results[3]["chosen_action"] in ("ESCALATE", "WAIT")
+    assert results[3]["execution_status"] == "BLOCKED_CIRCUIT_OPEN"
+    assert results[4]["chosen_action"] in ("ESCALATE", "WAIT")
+    assert results[4]["execution_status"] == "BLOCKED_CIRCUIT_OPEN"
+
+    # (d) Audit rows exist for all 5 attempts
+    with db.get_conn() as conn:
+        for c in cases:
+            count = conn.execute("SELECT COUNT(*) FROM audit_logs WHERE event_id = ?", (c["event_id"],)).fetchone()[0]
+            assert count >= 1

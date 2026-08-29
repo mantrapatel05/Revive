@@ -393,8 +393,9 @@ class RecoveryPipeline:
 
         Fail-closed behavior:
         - Missing credentials → ESCALATE
+        - Circuit Breaker OPEN → Short-circuit to ESCALATE/WAIT without network calls
         - NotImplementedError (e.g. NUDGE not wired) → WAIT
-        - RazorpayAPIError → ESCALATE
+        - RazorpayAPIError → Record failure in Circuit Breaker, fail closed to ESCALATE
         """
         from app.execution.simulator import ExecutionResult
 
@@ -411,8 +412,24 @@ class RecoveryPipeline:
                 probability=0.0, time_to_recovery=0.0,
             )
 
+        if not self.circuit_breaker.allow_request():
+            logger.warning(
+                "[LIVE] Circuit breaker is OPEN — short-circuiting live execution for case %s",
+                case.get("event_id"),
+            )
+            fallback = "WAIT" if "WAIT" in feasible and case.get("native_retry_scheduled") else "ESCALATE"
+            return ExecutionResult(
+                success=False, recovered_amount=0.0, cost=0.0,
+                action=fallback,
+                status="BLOCKED_CIRCUIT_OPEN",
+                detail="live: circuit breaker OPEN, short-circuited external call",
+                probability=0.0, time_to_recovery=0.0,
+            )
+
         try:
-            return self.live_executor.execute(case, best_action)
+            res = self.live_executor.execute(case, best_action)
+            self.circuit_breaker.record_success()
+            return res
         except NotImplementedError as exc:
             logger.warning(
                 "[LIVE] Action %s not wired for live execution (%s) — "
@@ -427,6 +444,7 @@ class RecoveryPipeline:
                 probability=0.0, time_to_recovery=0.0,
             )
         except RazorpayAPIError as exc:
+            self.circuit_breaker.record_failure()
             logger.error(
                 "[LIVE] Razorpay API error for case %s action %s: %s — "
                 "failing closed to ESCALATE",
@@ -435,6 +453,7 @@ class RecoveryPipeline:
             return ExecutionResult(
                 success=False, recovered_amount=0.0, cost=10.0,
                 action="ESCALATE",
+                status="PROVIDER_ERROR",
                 detail=f"live: Razorpay API error, failed closed to ESCALATE: {exc}",
                 probability=0.0, time_to_recovery=0.0,
             )
