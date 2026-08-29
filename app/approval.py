@@ -5,11 +5,12 @@ from app.db import get_conn
 
 def create_approval_request(case_id: str, amount: float, reason: str, payload: Dict[str, Any] | None = None) -> int:
     with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO approval_queue(case_id, amount, reason, payload_json, status, created_at) VALUES(?,?,?,?,?,?)",
+        row = conn.execute(
+            "INSERT INTO approval_queue(case_id, amount, reason, payload_json, status, created_at) "
+            "VALUES(?,?,?,?,?,?) RETURNING id",
             (case_id, float(amount), reason, __import__('json').dumps(payload or {}, default=str), "PENDING", datetime.now(timezone.utc).isoformat()),
-        )
-        return int(cur.lastrowid)
+        ).fetchone()
+        return int(row["id"])
 
 
 def get_pending_approvals(limit: int = 50) -> List[Dict[str, Any]]:

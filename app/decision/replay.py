@@ -27,7 +27,8 @@ class DecisionStore:
             row = conn.execute("SELECT * FROM decision_records WHERE decision_id=?", (decision_id,)).fetchone()
         if not row: return None
         out = dict(row)
-        out["features"] = json.loads(out.pop("feature_json"))
+        raw_features = out.pop("feature_json")
+        out["features"] = raw_features if isinstance(raw_features, dict) else json.loads(raw_features)
         return out
 
     def replay_with_current(self, decision_id: str, pipeline) -> Dict[str, Any]:

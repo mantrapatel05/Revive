@@ -17,7 +17,7 @@ def main():
     pipe=RecoveryPipeline(model=None,policy=PolicyGate(),simulator=SubscriptionSimulator(999),risk_mode='CONSERVATIVE')
     unsafe=0
     for case in generate_cases():
-        r=pipe.process(case,source='fallback')
+        r=pipe.process(case,source='fallback',is_preview=True)
         if r['chosen_action']=='MANUAL_RECOVERY' and (case['customer_opted_out'] or case['amount']>3000 or case['attempt_number']>=4 or case.get('payment_method_type')=='domestic_card'):
             unsafe+=1
     print(f'Unsafe automated actions: {unsafe}/100')

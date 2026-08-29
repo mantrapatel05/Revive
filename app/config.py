@@ -7,9 +7,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv('DATA_DIR', BASE_DIR / 'data/generated'))
 RESULTS_DIR = Path(os.getenv('RESULTS_DIR', BASE_DIR / 'data/evaluation'))
 MODEL_DIR = Path(os.getenv('MODEL_DIR', BASE_DIR / 'models'))
-DATABASE_PATH = Path(os.getenv('DATABASE_PATH', BASE_DIR / 'revive.db'))
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://revive_admin:revive_dev_password@localhost:5432/revive')
-APP_DATABASE_URL = os.getenv('APP_DATABASE_URL', 'postgresql://revive_app:revive_app_password@localhost:5432/revive')
+ADMIN_DATABASE_URL = os.getenv(
+    'ADMIN_DATABASE_URL',
+    os.getenv('DATABASE_URL', 'postgresql://revive_admin:revive_dev_password@localhost:5433/revive'),
+)
+APP_DATABASE_URL = os.getenv('APP_DATABASE_URL', 'postgresql://revive_app:revive_app_password@localhost:5433/revive')
 RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 RAZORPAY_WEBHOOK_SECRET = os.getenv('RAZORPAY_WEBHOOK_SECRET', '')
@@ -24,3 +26,8 @@ MODEL_VERSION = 'calibrated-tlearner-v5'
 POLICY_VERSION = 'policy-v5'
 PROMPT_VERSION = 'reasoning-v1'
 SCENARIO_VERSION = 'sim-v5.0'
+
+
+def get_db_url(admin: bool = False) -> str:
+    """Return the narrowly scoped connection URL for this operation."""
+    return ADMIN_DATABASE_URL if admin else APP_DATABASE_URL

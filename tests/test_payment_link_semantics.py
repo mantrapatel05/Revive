@@ -59,12 +59,8 @@ class MockRazorpayAdapter:
         }
 
 
-def test_payment_link_creation_is_not_recovery(tmp_path, monkeypatch):
+def test_payment_link_creation_is_not_recovery():
     """Assert Payment Link API success produces EXECUTION_REQUESTED and PAYMENT_PENDING, NOT CONFIRMED or RECOVERED."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_semantics.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_semantics.db")
     init_db()
 
     mock_adapter = MockRazorpayAdapter()
@@ -110,12 +106,8 @@ def test_payment_link_creation_is_not_recovery(tmp_path, monkeypatch):
     assert decision["recovered_amount"] == 0.0
 
 
-def test_successful_payment_event_confirms_recovery(tmp_path, monkeypatch):
+def test_successful_payment_event_confirms_recovery():
     """Simulate a verified Razorpay payment-success webhook and assert final_state transitions to CONFIRMED."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_reconcile.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_reconcile.db")
     init_db()
 
     mock_adapter = MockRazorpayAdapter()
@@ -186,17 +178,14 @@ def test_successful_payment_event_confirms_recovery(tmp_path, monkeypatch):
         intent_row = conn.execute("SELECT * FROM execution_intents WHERE decision_id=?", (decision_id,)).fetchone()
         assert intent_row is not None
         assert intent_row["status"] == "CONFIRMED"
-        res_json = json.loads(intent_row["result_json"])
+        raw_res = intent_row["result_json"]
+        res_json = raw_res if isinstance(raw_res, dict) else json.loads(raw_res)
         assert res_json["final_state"]["state"] == "CONFIRMED"
         assert res_json["final_state"]["source"] == "razorpay_webhook"
 
 
-def test_duplicate_payment_event_is_idempotent(tmp_path, monkeypatch):
+def test_duplicate_payment_event_is_idempotent():
     """Send the same provider event twice and assert exactly one state transition without duplicate processing."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_idempotency.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_idempotency.db")
     init_db()
 
     from fastapi.testclient import TestClient
@@ -258,12 +247,8 @@ def test_payment_link_timeout_is_not_false_recovery(tmp_path, monkeypatch):
     assert pending_state != ReconciliationState.CONFIRMED
 
 
-def test_audit_distinguishes_execution_from_final_state(tmp_path, monkeypatch):
+def test_audit_distinguishes_execution_from_final_state():
     """Assert that the audit log distinctly records execution_result vs. final_state without conflation."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_audit_sep.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_audit_sep.db")
     init_db()
 
     mock_adapter = MockRazorpayAdapter()
@@ -298,19 +283,16 @@ def test_audit_distinguishes_execution_from_final_state(tmp_path, monkeypatch):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM audit_logs WHERE event_id=?", ("EVT-AUDIT-SEP-01",)).fetchone()
         assert row is not None
-        payload = json.loads(row["payload_json"])
+        raw_payload = row["payload_json"]
+        payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload)
         assert "execution_result" in payload
         assert "final_state" in payload
         assert payload["execution_result"]["status"] == "EXECUTION_REQUESTED"
         assert payload["final_state"]["state"] == "PAYMENT_PENDING"
 
 
-def test_manual_recovery_does_not_claim_immediate_recovery(tmp_path, monkeypatch):
+def test_manual_recovery_does_not_claim_immediate_recovery():
     """Assert action name remains MANUAL_RECOVERY while state remains EXECUTION_REQUESTED / PAYMENT_PENDING before payment event."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_man_rec.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_man_rec.db")
     init_db()
 
     mock_adapter = MockRazorpayAdapter()

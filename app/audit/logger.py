@@ -16,4 +16,4 @@ class AuditLogger:
                 'SELECT payload_json FROM audit_logs ORDER BY id DESC LIMIT ?',
                 (limit,),
             ).fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return [r[0] if isinstance(r[0], dict) else json.loads(r[0]) for r in rows]

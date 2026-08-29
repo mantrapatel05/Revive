@@ -113,17 +113,14 @@ def test_model_policy_version_mismatch_blocked():
     assert decision["execution_status"] in ("BLOCKED", "NO_RECOVERY")
 
 
-def test_malformed_llm_output_fails_closed_and_preserves_audit(tmp_path, monkeypatch):
+def test_malformed_llm_output_fails_closed_and_preserves_audit(monkeypatch):
     """Scenario 1: Malformed LLM response fails closed to ESCALATE, preserves raw output in audit, and batch loop continues."""
     import json
     from unittest.mock import MagicMock, patch
-    from app import config
     import app.db as db
     from app.pipeline import RecoveryPipeline
     from app.execution.simulator import SubscriptionSimulator
 
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_malformed.db")
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_malformed.db")
     db.init_db()
 
     pipeline = RecoveryPipeline(simulator=SubscriptionSimulator(42))
@@ -199,22 +196,19 @@ def test_malformed_llm_output_fails_closed_and_preserves_audit(tmp_path, monkeyp
     with db.get_conn() as conn:
         row = conn.execute("SELECT payload_json FROM audit_logs WHERE event_id = ?", ("EVT-TEST-02-MALFORMED",)).fetchone()
         assert row is not None
-        payload = json.loads(row[0])
+        payload = row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"])
         assert payload["diagnosis"]["source"] == "llm_failed"
         assert payload["diagnosis"]["raw_llm_output"] == raw_bad_json
 
 
-def test_malformed_llm_messaging_fails_closed_and_logs_audit(tmp_path, monkeypatch):
+def test_malformed_llm_messaging_fails_closed_and_logs_audit(monkeypatch):
     """Scenario 2: Malformed LLM message-generation output fails closed, demotes to ESCALATE, and records audit entry."""
     import json
-    from app import config
     import app.db as db
     from app.pipeline import RecoveryPipeline
     from app.execution.simulator import SubscriptionSimulator
     from unittest.mock import MagicMock, patch
 
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_msg_drill.db")
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_msg_drill.db")
     db.init_db()
 
     pipeline = RecoveryPipeline(simulator=SubscriptionSimulator(42))
@@ -256,23 +250,25 @@ def test_malformed_llm_messaging_fails_closed_and_logs_audit(tmp_path, monkeypat
     with db.get_conn() as conn:
         row = conn.execute("SELECT payload_json FROM audit_logs WHERE event_id = ?", ("EVT-TEST-MSG-MALFORMED",)).fetchone()
         assert row is not None
-        payload = json.loads(row[0])
+        payload = row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"])
         assert payload["generated_message"]["source"] == "llm_failed"
         assert payload["generated_message"]["status"] == "BLOCKED_TONE_CHECK"
 
 
-def test_audit_tamper_attempt_raises_engine_rejection(tmp_path, monkeypatch):
+def test_audit_tamper_attempt_raises_engine_rejection():
     """Scenario 3: Audit tamper attempt (UPDATE/DELETE) raises engine-level error (IntegrityError/InsufficientPrivilege)."""
-    import sqlite3
-    from app import config
     import app.db as db
     from app.audit.logger import AuditLogger
 
-    test_db = tmp_path / "test_tamper_drill.db"
-    monkeypatch.setattr(config, "DATABASE_PATH", test_db)
-    monkeypatch.setattr(db, "DATABASE_PATH", test_db)
     db.init_db()
 
+    from app.decision.replay import DecisionStore
+    DecisionStore().save({
+        "decision_id": "dec_tamper_test_01",
+        "case_id": "EVT-TAMPER-DRILL-01",
+        "features": {},
+        "chosen_action": "ESCALATE",
+    })
     logger = AuditLogger()
     record = {
         "decision_id": "dec_tamper_test_01",
@@ -284,7 +280,7 @@ def test_audit_tamper_attempt_raises_engine_rejection(tmp_path, monkeypatch):
     logger.log(record)
 
     # 1. Attempt UPDATE -> must raise IntegrityError from prevent_audit_update trigger
-    with pytest.raises((sqlite3.IntegrityError, Exception)) as exc_update:
+    with pytest.raises(Exception) as exc_update:
         with db.get_conn() as conn:
             conn.execute(
                 "UPDATE audit_logs SET payload_json = ? WHERE event_id = ?",
@@ -293,16 +289,15 @@ def test_audit_tamper_attempt_raises_engine_rejection(tmp_path, monkeypatch):
     assert "audit_log is append-only: UPDATE forbidden" in str(exc_update.value) or "permission denied" in str(exc_update.value)
 
     # 2. Attempt DELETE -> must raise IntegrityError from prevent_audit_delete trigger
-    with pytest.raises((sqlite3.IntegrityError, Exception)) as exc_delete:
+    with pytest.raises(Exception) as exc_delete:
         with db.get_conn() as conn:
             conn.execute("DELETE FROM audit_logs WHERE event_id = ?", ("EVT-TAMPER-DRILL-01",))
     assert "audit_log is append-only: DELETE forbidden" in str(exc_delete.value) or "permission denied" in str(exc_delete.value)
 
 
-def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(tmp_path, monkeypatch):
+def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(monkeypatch):
     """Scenario 4: Gateway provider down trips circuit breaker, short-circuits further calls, routes safely to ESCALATE."""
     import json
-    from app import config
     import app.db as db
     from app.pipeline import RecoveryPipeline
     from app.execution.simulator import SubscriptionSimulator
@@ -310,8 +305,6 @@ def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(tmp_path, m
     from app.execution.razorpay import RazorpayAPIError
     from app.execution.circuit_breaker import CircuitBreaker, CircuitState
 
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_cb_drill.db")
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_cb_drill.db")
     db.init_db()
 
     class MockFailingAdapter:

@@ -5,7 +5,7 @@ Covers the key stage failure-injection drills required for judge presentations:
 1. Webhook Idempotency Drill: Rejects duplicate webhook retries at DB constraint boundary.
 2. Malformed LLM Diagnosis Drill: Catches schema violations in decline diagnosis, fails closed to ESCALATE, preserves raw payload in audit, batch continues unbroken.
 3. Malformed LLM Message Fill Drill: Catches malformed message-generation output, suppresses dispatch, flags for human review, persists audit record.
-4. Engine-Enforced Audit Tamper Drill: Proves UPDATE and DELETE against audit_logs are rejected by the database engine (PostgreSQL InsufficientPrivilege / SQLite IntegrityError).
+4. Engine-Enforced Audit Tamper Drill: Proves UPDATE and DELETE against audit_logs are rejected by PostgreSQL GRANT-level enforcement (InsufficientPrivilege).
 5. Gateway Provider Outage Drill: 503 errors trip Circuit Breaker to OPEN at threshold 3, short-circuiting downstream calls.
 
 Usage:
@@ -23,7 +23,7 @@ import hmac
 import json
 import logging
 import os
-import sqlite3
+
 import sys
 import time
 from datetime import datetime, timezone
@@ -291,12 +291,11 @@ def run_audit_tamper_drill() -> bool:
     # 1. Insert genuine audit row
     test_case_id = f"EVT-TAMPER-TEST-{int(time.time())}"
     with get_conn(admin=False) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO audit_logs (decision_id, event_id, case_id, timestamp, payload_json) VALUES (?, ?, ?, ?, ?)",
-            (f"dec_{test_case_id}", test_case_id, test_case_id, datetime.now(timezone.utc).isoformat(), '{"status": "AUTHENTIC_RECORD"}'),
-        )
-        row_id = cursor.lastrowid if hasattr(cursor, "lastrowid") else 1
+        row = conn.execute(
+            "INSERT INTO audit_logs (decision_id, event_id, case_id, timestamp, payload_json) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            (f"dec_{test_case_id}", test_case_id, test_case_id, datetime.now(timezone.utc).isoformat(), json.dumps({"status": "AUTHENTIC_RECORD"})),
+        ).fetchone()
+        row_id = row["id"] if row else 1
         print(f"\n[STEP 1] Inserted authentic audit row ID {row_id} (case_id: {test_case_id}).")
 
     # 2. Attempt UPDATE against audit row -> Must be rejected by database engine
@@ -305,14 +304,14 @@ def run_audit_tamper_drill() -> bool:
     error_msg = ""
     try:
         with get_conn(admin=False) as conn:
-            conn.execute("UPDATE audit_logs SET payload_json = ? WHERE case_id = ?", ('{"tampered": true}', test_case_id))
-    except (sqlite3.IntegrityError, Exception) as exc:
+            conn.execute("UPDATE audit_logs SET payload_json = ? WHERE case_id = ?", (json.dumps({"tampered": True}), test_case_id))
+    except Exception as exc:
         update_blocked = True
         error_msg = str(exc)
         print(f"  -> [ABORTED] Database engine rejected UPDATE: {error_msg}")
 
     assert update_blocked, "Database engine failed to block UPDATE on audit_logs"
-    assert "append-only" in error_msg or "permission denied" in error_msg or "UPDATE forbidden" in error_msg
+    assert "permission denied" in error_msg or "InsufficientPrivilege" in error_msg or "insufficient_privilege" in error_msg
 
     # 3. Attempt DELETE against audit row -> Must be rejected by database engine
     print("\n[STEP 3] Attempting unauthorized DELETE on audit_logs row...")
@@ -321,19 +320,20 @@ def run_audit_tamper_drill() -> bool:
     try:
         with get_conn(admin=False) as conn:
             conn.execute("DELETE FROM audit_logs WHERE case_id = ?", (test_case_id,))
-    except (sqlite3.IntegrityError, Exception) as exc:
+    except Exception as exc:
         delete_blocked = True
         del_error_msg = str(exc)
         print(f"  -> [ABORTED] Database engine rejected DELETE: {del_error_msg}")
 
     assert delete_blocked, "Database engine failed to block DELETE on audit_logs"
-    assert "append-only" in del_error_msg or "permission denied" in del_error_msg or "DELETE forbidden" in del_error_msg
+    assert "permission denied" in del_error_msg or "InsufficientPrivilege" in del_error_msg or "insufficient_privilege" in del_error_msg
 
     # 4. Verify original row integrity
     with get_conn(admin=False) as conn:
         row = conn.execute("SELECT payload_json FROM audit_logs WHERE case_id = ?", (test_case_id,)).fetchone()
         assert row is not None
-        assert "AUTHENTIC_RECORD" in row[0]
+        payload = row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"])
+        assert payload.get("status") == "AUTHENTIC_RECORD"
         print(f"\n[STEP 4] Integrity Verified: Record remains pristine ('AUTHENTIC_RECORD').")
 
     print("\n[RESULT] PASSED: Database engine triggers/privileges strictly enforce append-only immutability.")

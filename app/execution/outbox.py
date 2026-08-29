@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from datetime import datetime, timezone
 from app.db import get_conn
 from app.execution.authorization import ExecutionAuthorization
@@ -7,17 +6,14 @@ from app.execution.authorization import ExecutionAuthorization
 
 def enqueue_execution_intent(auth: ExecutionAuthorization, payload: dict) -> int:
     with get_conn() as conn:
-        try:
-            cur = conn.execute(
-                "INSERT INTO execution_intents (decision_id, case_id, action, payload_json, status, created_at) VALUES (?, ?, ?, ?, 'PENDING', ?)",
-                (auth.decision_id, auth.case_id, auth.action, json.dumps(payload, default=str), datetime.now(timezone.utc).isoformat()),
-            )
-            return int(cur.lastrowid)
-        except sqlite3.IntegrityError:
-            row=conn.execute("SELECT id FROM execution_intents WHERE decision_id=?",(auth.decision_id,)).fetchone()
-            if row is None:
-                raise
-            return int(row[0])
+        row = conn.execute(
+            "INSERT INTO execution_intents (decision_id, case_id, action, payload_json, status, created_at) "
+            "VALUES (?, ?, ?, ?, 'PENDING', ?) "
+            "ON CONFLICT (decision_id) DO UPDATE SET decision_id=EXCLUDED.decision_id "
+            "RETURNING id",
+            (auth.decision_id, auth.case_id, auth.action, json.dumps(payload, default=str), datetime.now(timezone.utc)),
+        ).fetchone()
+        return int(row["id"])
 
 
 def get_pending_intents(limit: int = 10):

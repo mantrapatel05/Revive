@@ -99,17 +99,17 @@ def reconcile_webhook_event(payload: dict, event_id: str | None = None) -> dict:
         final_state_val = ReconciliationState.UNKNOWN
         reason = f"Unmapped provider event: {event_type}"
 
-    # Correlate with existing execution intent in SQLite
+    # Correlate with existing execution intent in PostgreSQL
     matched_intent = None
     with get_conn() as conn:
         if payment_link_id:
             matched_intent = conn.execute(
-                "SELECT * FROM execution_intents WHERE payload_json LIKE ? OR result_json LIKE ? ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM execution_intents WHERE payload_json::text LIKE ? OR result_json::text LIKE ? ORDER BY id DESC LIMIT 1",
                 (f"%{payment_link_id}%", f"%{payment_link_id}%"),
             ).fetchone()
         if not matched_intent and subscription_id:
             matched_intent = conn.execute(
-                "SELECT * FROM execution_intents WHERE case_id LIKE ? OR payload_json LIKE ? ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM execution_intents WHERE case_id LIKE ? OR payload_json::text LIKE ? ORDER BY id DESC LIMIT 1",
                 (f"%{subscription_id}%", f"%{subscription_id}%"),
             ).fetchone()
 

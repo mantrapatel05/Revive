@@ -237,7 +237,7 @@ class RecoveryPipeline:
         if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
             diag_class = case.get("decline_class") or (case.get("diagnosis", {}).get("decline_class") if isinstance(case.get("diagnosis"), dict) else "soft")
             link_url = getattr(execution, "payment_link_url", None) or f"https://rzp.io/rzp/{case.get('event_id', 'pay')}"
-            generated_message = generate_message(case, best_action, diag_class, payment_link=link_url)
+            generated_message = generate_message(case, best_action, diag_class, payment_link=link_url, is_preview=is_preview)
 
             # Tone-safety fail closed
             if not generated_message.get("tone_check_passed", True):
@@ -257,6 +257,16 @@ class RecoveryPipeline:
                 self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
 
         decision_id = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
+
+        # Persist decision record BEFORE execution intent (FK dependency)
+        if not is_preview:
+            self.decision_store.save({
+                "decision_id": decision_id,
+                "case_id": case["event_id"],
+                "features": dict(case),
+                "chosen_action": best_action,
+                **versions(),
+            })
 
         authorization = None
         intent_id = None

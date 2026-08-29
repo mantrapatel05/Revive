@@ -105,6 +105,7 @@ def generate_message(
     diagnosis_class: str,
     payment_link: str = "https://rzp.io/rzp/pay_demo",
     channel: str = "whatsapp",
+    is_preview: bool = False,
 ) -> Dict[str, Any]:
     """
     Generates and tone-checks customer communication message after Governor approval.
@@ -134,8 +135,8 @@ def generate_message(
     raw_llm_output = None
     extra_violations: List[str] = []
 
-    # 2. Narrow LLM personalization if Groq key available
-    if GROQ_API_KEY:
+    # 2. Narrow LLM personalization if Groq key available and not in offline preview
+    if GROQ_API_KEY and not is_preview:
         system_prompt = (
             "You are a polite, respectful customer communication assistant for subscription billing.\n"
             f"Generate a friendly, concise message for intent: '{template_intent}'.\n"

@@ -10,14 +10,11 @@ from app.main import app
 import app.api.webhooks as webhooks_mod
 from app.execution.authorization import ExecutionAuthorization
 from app.execution.outbox import enqueue_execution_intent
+from app.decision.replay import DecisionStore
 
 
-def test_on_conflict_returning_id_behavior(tmp_path, monkeypatch):
-    """Assert PostgreSQL/SQLite ON CONFLICT DO NOTHING RETURNING id behaves atomically."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_conflict.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_conflict.db")
+def test_on_conflict_returning_id_behavior():
+    """Assert PostgreSQL ON CONFLICT DO NOTHING RETURNING id is atomic."""
     init_db()
 
     event_id = "evt_atomic_001"
@@ -30,12 +27,8 @@ def test_on_conflict_returning_id_behavior(tmp_path, monkeypatch):
     assert res2 is False
 
 
-def test_concurrent_webhook_deliveries_same_case(tmp_path, monkeypatch):
+def test_concurrent_webhook_deliveries_same_case():
     """Fire near-simultaneous webhook deliveries for the same event/case and assert only one action is executed."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_concurrency.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_concurrency.db")
     init_db()
 
     webhooks_mod.RAZORPAY_WEBHOOK_SECRET = "test-secret"
@@ -85,12 +78,8 @@ def test_concurrent_webhook_deliveries_same_case(tmp_path, monkeypatch):
         assert len(rows) == 1
 
 
-def test_per_case_intent_uniqueness(tmp_path, monkeypatch):
+def test_per_case_intent_uniqueness():
     """Assert concurrent attempts to enqueue an intent for the same decision_id return the same intent ID."""
-    from app import config
-    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_intent_uniq.db")
-    import app.db as db
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_intent_uniq.db")
     init_db()
 
     auth = ExecutionAuthorization.create(
@@ -100,6 +89,12 @@ def test_per_case_intent_uniqueness(tmp_path, monkeypatch):
         model_version="calibrated-tlearner-v5",
         decision_id="decision_race_12345",
     )
+    DecisionStore().save({
+        "decision_id": auth.decision_id,
+        "case_id": auth.case_id,
+        "features": {},
+        "chosen_action": auth.action,
+    })
 
     intent_id1 = enqueue_execution_intent(auth, {"amount": 2499.0})
     intent_id2 = enqueue_execution_intent(auth, {"amount": 2499.0})

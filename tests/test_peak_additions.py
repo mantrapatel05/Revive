@@ -5,11 +5,7 @@ from app.db import init_db
 def test_uplift_module_has_actions():
     assert TwoModelUplift.ACTIONS == ['NUDGE','MANUAL_RECOVERY']
 
-def test_approval_queue_roundtrip(tmp_path, monkeypatch):
-    from app import config
-    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'t.db')
-    import app.db as db
-    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'t.db')
+def test_approval_queue_roundtrip():
     init_db()
     approval_id=create_approval_request('CASE-X', 9000, 'high value')
     assert get_pending_approvals()[0]['id']==approval_id
@@ -17,11 +13,7 @@ def test_approval_queue_roundtrip(tmp_path, monkeypatch):
     assert get_pending_approvals()==[]
 
 
-def test_pipeline_escalate_creates_approval_request(tmp_path, monkeypatch):
-    from app import config
-    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_pipeline.db')
-    import app.db as db
-    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_pipeline.db')
+def test_pipeline_escalate_creates_approval_request():
     init_db()
 
     from app.pipeline import RecoveryPipeline
@@ -54,7 +46,8 @@ def test_pipeline_escalate_creates_approval_request(tmp_path, monkeypatch):
     assert 'Customer opted out' in req['reason'] or 'Amount within automatic action ceiling' in req['reason']
 
     import json
-    payload = json.loads(req['payload_json'])
+    raw_payload = req['payload_json']
+    payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload)
     assert 'probabilities' in payload
     assert 'policy_reasons' in payload
     assert 'chosen_action' in payload
@@ -62,11 +55,7 @@ def test_pipeline_escalate_creates_approval_request(tmp_path, monkeypatch):
     assert 'uncertainty' in payload
 
 
-def test_api_approvals_endpoints(tmp_path, monkeypatch):
-    from app import config
-    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_api_app.db')
-    import app.db as db
-    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_api_app.db')
+def test_api_approvals_endpoints():
     init_db()
 
     from fastapi.testclient import TestClient
@@ -96,11 +85,7 @@ def test_api_approvals_endpoints(tmp_path, monkeypatch):
     assert len(res_empty.json()['approvals']) == 0
 
 
-def test_merchant_config_endpoints(tmp_path, monkeypatch):
-    from app import config
-    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_config.db')
-    import app.db as db
-    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_config.db')
+def test_merchant_config_endpoints():
     init_db()
 
     from fastapi.testclient import TestClient
@@ -145,11 +130,7 @@ def test_merchant_config_endpoints(tmp_path, monkeypatch):
     assert pipe.policy.max_customer_nudges_7d == 4
 
 
-def test_pipeline_dynamic_merchant_config_behavior(tmp_path, monkeypatch):
-    from app import config
-    monkeypatch.setattr(config, 'DATABASE_PATH', tmp_path/'test_dyn_pipe.db')
-    import app.db as db
-    monkeypatch.setattr(db, 'DATABASE_PATH', tmp_path/'test_dyn_pipe.db')
+def test_pipeline_dynamic_merchant_config_behavior():
     init_db()
 
     from app.pipeline import RecoveryPipeline
