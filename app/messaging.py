@@ -92,6 +92,13 @@ def check_tone(message_text: str) -> Tuple[bool, List[str]]:
     return len(violations) == 0, violations
 
 
+from pydantic import BaseModel, Field, ValidationError
+
+class MessageGenerationOutput(BaseModel):
+    message: str = Field(min_length=10, max_length=500)
+    customer_name: str
+    intent: str
+
 def generate_message(
     case: Dict[str, Any],
     action: str,
@@ -123,6 +130,9 @@ def generate_message(
 
     generated_text = formatted_base
     generation_source = "template"
+    llm_validation_failed = False
+    raw_llm_output = None
+    extra_violations: List[str] = []
 
     # 2. Narrow LLM personalization if Groq key available
     if GROQ_API_KEY:
@@ -134,7 +144,12 @@ def generate_message(
             "2. MUST NOT contain pressuring, demanding, or shaming language (e.g. avoid 'must', 'immediately', 'warning').\n"
             "3. MUST address only the named customer.\n"
             f"4. MUST keep amounts in INR format (e.g. ₹{amount:,.2f}) and preserve the payment link exactly: {payment_link}.\n"
-            "5. Output ONLY the raw message string without quotes or markdown."
+            "5. Output ONLY a valid JSON object matching this schema:\n"
+            "   {\n"
+            "     \"message\": \"<the generated message>\",\n"
+            "     \"customer_name\": \"<customer name>\",\n"
+            "     \"intent\": \"<intent>\"\n"
+            "   }"
         )
 
         user_content = (
@@ -152,20 +167,34 @@ def generate_message(
                         {"role": "user", "content": user_content},
                     ],
                     "temperature": 0.2,
-                    "max_tokens": 100,
+                    "max_tokens": 120,
+                    "response_format": {"type": "json_object"},
                 },
                 timeout=5,
             )
             if r.status_code == 200:
-                content = r.json()["choices"][0]["message"]["content"].strip()
-                if content and payment_link in content:
-                    generated_text = content
+                raw_llm_output = r.json()["choices"][0]["message"]["content"].strip()
+                parsed = json.loads(raw_llm_output)
+                validated = MessageGenerationOutput.model_validate(parsed)
+                if payment_link in validated.message:
+                    generated_text = validated.message
                     generation_source = "llm"
+                else:
+                    llm_validation_failed = True
+                    extra_violations.append("Payment link missing in generated LLM message")
+        except ValidationError as val_err:
+            llm_validation_failed = True
+            extra_violations.append(f"LLM output schema validation failed: {str(val_err)}")
+            logger.warning("[MESSAGING] LLM schema validation error: %s", val_err)
         except Exception as exc:
             logger.info("[MESSAGING] LLM personalization fallback to template: %s", exc)
 
     # 3. Tone-check guard
     tone_ok, violations = check_tone(generated_text)
+    if llm_validation_failed:
+        tone_ok = False
+        violations.extend(extra_violations)
+        generation_source = "llm_failed"
 
     log_entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

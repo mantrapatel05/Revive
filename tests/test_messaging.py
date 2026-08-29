@@ -101,3 +101,30 @@ def test_audit_logs_message_metadata():
     assert msg["status"] == "APPROVED_FOR_SEND"
     assert "Vikram Mehta" in msg["content"]
     assert "https://rzp.io/rzp/vikram_pay" in msg["content"]
+
+
+def test_llm_message_pydantic_validation_fails_closed(monkeypatch):
+    """When LLM returns malformed JSON or schema violation, generate_message must fail closed to tone_check_passed=False."""
+    import app.messaging as messaging
+    monkeypatch.setattr(messaging, "GROQ_API_KEY", "mock_key")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    # Missing required 'customer_name' and 'intent'
+                    "content": '{"message": "Hi"}'
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: mock_resp)
+
+    case = {"customer_name": "Deepak Roy", "amount": 2499.0}
+    msg = generate_message(case, "NUDGE", "soft", payment_link="https://rzp.io/rzp/demo")
+    assert msg["tone_check_passed"] is False
+    assert msg["source"] == "llm_failed"
+    assert msg["status"] == "BLOCKED_TONE_CHECK"
+    assert any("schema validation failed" in v for v in msg["violations"])
