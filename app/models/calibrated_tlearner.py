@@ -31,6 +31,8 @@ class CalibratedTLearner:
     def _feature_frame(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
         feature_cols = [c for c in df.columns if c not in ID_COLUMNS]
         x = df[feature_cols].copy()
+        # Drop non-scalar metadata objects (e.g. diagnosis, generated_message)
+        x = x.drop(columns=[c for c in x.columns if x[c].apply(lambda v: isinstance(v, (dict, list))).any()])
         cat_cols = [c for c in x.columns if x[c].dtype == object]
         x = pd.get_dummies(x, columns=cat_cols, drop_first=True)
         if fit:

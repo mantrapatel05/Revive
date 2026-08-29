@@ -37,7 +37,7 @@ def test_pipeline_escalate_creates_approval_request():
     assert res['chosen_action'] == 'ESCALATE'
     assert res['approval_id'] is not None
 
-    pending = get_pending_approvals()
+    pending = [p for p in get_pending_approvals() if p['id'] == res['approval_id']]
     assert len(pending) == 1
     req = pending[0]
     assert req['case_id'] == 'ESC-001'

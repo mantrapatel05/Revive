@@ -65,10 +65,11 @@ def build_case(payload: dict) -> dict:
         'invoice_status': sub.get('invoice_status', 'issued'),
         'native_retry_scheduled': status == 'pending',
         'is_live': True,
+        'current_time': sub.get('current_time') or payload.get('current_time'),
     }
 
 
-def main_once(limit=20):
+def main_once(limit=20, event_id=None):
     init_db()
     model = None
     model_path = MODEL_DIR / 'calibrated_tlearner.joblib'
@@ -76,13 +77,15 @@ def main_once(limit=20):
         model = CalibratedTLearner(MODEL_DIR)
         model.load()
     pipeline = RecoveryPipeline(model=model)
-    rows = claim_webhook_events(limit)
+    rows = claim_webhook_events(limit, event_id=event_id)
     for row in rows:
         try:
-            payload = json.loads(row['payload_json'])
+            raw_payload = row['payload_json']
+            payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
             event_type = row['event_type'] or payload.get('event','')
             if event_type in {'subscription.pending', 'subscription.halted', 'payment.failed'}:
                 case = build_case(payload)
+                case['event_id'] = row['event_id']
                 pipeline.process(case)
             elif event_type in {'payment_link.paid', 'payment.captured', 'invoice.paid', 'order.paid', 'payment_link.cancelled', 'payment_link.expired'}:
                 from app.execution.reconciliation import reconcile_webhook_event

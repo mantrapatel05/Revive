@@ -10,7 +10,7 @@ from app.economics import EconomicsEngine, MerchantConfig
 from app.decision.versioning import versions
 from app.decision.replay import stable_hash, DecisionStore
 from app.execution.authorization import ExecutionAuthorization
-from app.execution.outbox import enqueue_execution_intent
+from app.execution.outbox import enqueue_execution_intent, save_decision_and_intent, claim_pending_intent, mark_intent_status
 from app.execution.circuit_breaker import CircuitBreaker
 from app.db import init_db
 from app.approval import create_approval_request
@@ -213,11 +213,82 @@ class RecoveryPipeline:
             if best_action == "MANUAL_RECOVERY" and not self.circuit_breaker.allow_request():
                 best_action = "WAIT" if "WAIT" in feasible else "ESCALATE"
 
+        # Post-Governor Message Generation for candidate customer-facing actions
+        generated_message = None
+        if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
+            diag_class = case.get("decline_class") or (case.get("diagnosis", {}).get("decline_class") if isinstance(case.get("diagnosis"), dict) else "soft")
+            link_url = f"https://rzp.io/rzp/{case.get('event_id', 'pay')}"
+            generated_message = generate_message(case, best_action, diag_class, payment_link=link_url, is_preview=is_preview)
+
+            # Tone-safety fail closed
+            if not generated_message.get("tone_check_passed", True):
+                logger.warning(
+                    "[TONE_GUARD] Message tone check failed for case %s: %s — routing to ESCALATE",
+                    case.get("event_id"), generated_message.get("violations")
+                )
+                best_action = "ESCALATE"
+
+        decision_id = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
+
+        # Create & validate ExecutionAuthorization BEFORE any external call
+        authorization = None
+        intent_id = None
+        if best_action in {"MANUAL_RECOVERY", "NUDGE"} and not is_preview:
+            authorization = ExecutionAuthorization.create(
+                case["event_id"],
+                best_action,
+                versions()["policy_version"],
+                versions()["model_version"],
+                decision_id=decision_id,
+            )
+            if not authorization.is_valid(versions()["policy_version"], versions()["model_version"]):
+                logger.warning("[AUTH] Authorization invalid for case %s — routing to ESCALATE", case["event_id"])
+                best_action = "ESCALATE"
+                authorization = None
+
+        # Persist decision record + outbox intent in ONE ATOMIC TRANSACTION before external call
+        if not is_preview:
+            decision_record = {
+                "decision_id": decision_id,
+                "case_id": case["event_id"],
+                "features": dict(case),
+                "chosen_action": best_action,
+                **versions(),
+            }
+            intent_payload = {
+                "case": case,
+                "authorization": authorization.__dict__ if authorization else None,
+                "generated_message": generated_message,
+            } if authorization is not None else None
+
+            decision_id, intent_id = save_decision_and_intent(decision_record, authorization, intent_payload)
+
+        # Dedicated Executor: claim pending outbox intent, call provider exactly once, record provider response
         if is_live and not is_preview:
-            execution = self._execute_live(case, best_action, feasible)
-            # Update best_action if _execute_live downgraded it (e.g. missing creds)
-            best_action = execution.action
-            execution_status = execution.status
+            if best_action in {"MANUAL_RECOVERY", "NUDGE"} and intent_id is not None:
+                claimed = claim_pending_intent(intent_id)
+                execution = self._execute_live(case, best_action, feasible)
+                best_action = execution.action
+                execution_status = execution.status
+
+                # Store provider response back onto intent row
+                mark_intent_status(
+                    intent_id,
+                    execution.status,
+                    {
+                        "status": execution.status,
+                        "action": execution.action,
+                        "payment_link_id": getattr(execution, "payment_link_id", None),
+                        "payment_link_url": getattr(execution, "payment_link_url", None),
+                        "provider_response": getattr(execution, "provider_response", None),
+                        "detail": getattr(execution, "detail", ""),
+                    },
+                )
+            else:
+                execution = self._execute_live(case, best_action, feasible)
+                best_action = execution.action
+                execution_status = execution.status
+
             if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
                 final_state = {"state": "PAYMENT_PENDING", "reason": "payment_not_yet_observed"}
             elif best_action == "WAIT":
@@ -232,72 +303,11 @@ class RecoveryPipeline:
             execution_status = "SUCCESS" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILURE")
             final_state = {"state": "CONFIRMED" if execution.success else ("NO_RECOVERY" if best_action in {"WAIT", "ESCALATE"} else "FAILED"), "source": "simulator"}
 
-        # Post-Governor Message Generation for authorized customer-facing actions
-        generated_message = None
-        if best_action in {"MANUAL_RECOVERY", "NUDGE"}:
-            diag_class = case.get("decline_class") or (case.get("diagnosis", {}).get("decline_class") if isinstance(case.get("diagnosis"), dict) else "soft")
-            link_url = getattr(execution, "payment_link_url", None) or f"https://rzp.io/rzp/{case.get('event_id', 'pay')}"
-            generated_message = generate_message(case, best_action, diag_class, payment_link=link_url, is_preview=is_preview)
-
-            # Tone-safety fail closed
-            if not generated_message.get("tone_check_passed", True):
-                logger.warning(
-                    "[TONE_GUARD] Message tone check failed for case %s: %s — routing to ESCALATE",
-                    case.get("event_id"), generated_message.get("violations")
-                )
-                best_action = "ESCALATE"
-                if is_live and not is_preview:
-                    final_state = {"state": "QUEUED", "reason": "blocked_by_tone_check"}
-                    execution_status = "BLOCKED_TONE_CHECK"
-
         if best_action == "MANUAL_RECOVERY" and not is_preview:
             if is_live:
                 self.circuit_breaker.record_success() if execution.status == "EXECUTION_REQUESTED" else self.circuit_breaker.record_failure()
             else:
                 self.circuit_breaker.record_success() if execution.success else self.circuit_breaker.record_failure()
-
-        decision_id = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
-
-        # Persist decision record BEFORE execution intent (FK dependency)
-        if not is_preview:
-            self.decision_store.save({
-                "decision_id": decision_id,
-                "case_id": case["event_id"],
-                "features": dict(case),
-                "chosen_action": best_action,
-                **versions(),
-            })
-
-        authorization = None
-        intent_id = None
-        if best_action in {"MANUAL_RECOVERY", "NUDGE"} and not is_preview:
-            authorization = ExecutionAuthorization.create(
-                case["event_id"],
-                best_action,
-                versions()["policy_version"],
-                versions()["model_version"],
-                decision_id=decision_id,
-            )
-            intent_payload = {
-                "case": case,
-                "authorization": authorization.__dict__,
-                "payment_link_id": getattr(execution, "payment_link_id", None),
-                "payment_link_url": getattr(execution, "payment_link_url", None),
-                "generated_message": generated_message,
-            }
-            intent_id = enqueue_execution_intent(authorization, intent_payload)
-            if is_live:
-                from app.execution.outbox import mark_intent_status
-                mark_intent_status(
-                    intent_id,
-                    execution.status,
-                    {
-                        "status": execution.status,
-                        "payment_link_id": getattr(execution, "payment_link_id", None),
-                        "payment_link_url": getattr(execution, "payment_link_url", None),
-                        "final_state": final_state,
-                    },
-                )
 
         if is_live and not is_preview:
             wait_net = 0.0  # No simulator counterfactual for live cases
@@ -371,6 +381,7 @@ class RecoveryPipeline:
             "blocked_reasons": {a: feasibility[a].reasons for a in feasibility if feasibility[a].reasons},
             "all_policy_checks": {a: [c.__dict__ for c in feasibility[a].checks] for a in feasibility},
             "execution_status": execution_status,
+            "status": execution_status,
             "execution_result": execution_res_dict,
             "final_state": final_state,
             "payment_link_id": getattr(execution, "payment_link_id", None),

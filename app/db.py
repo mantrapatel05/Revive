@@ -114,10 +114,16 @@ def enqueue_webhook_event(event_id: str, event_type: str, payload_json: str, rec
     return row is not None
 
 
-def claim_webhook_events(limit: int = 20):
+def claim_webhook_events(limit: int = 20, event_id: str | None = None):
     """Atomically lease pending events without two workers processing one event."""
 
     with get_conn() as conn:
+        if event_id is not None:
+            return conn.execute(
+                "UPDATE webhook_events SET status='PROCESSING' "
+                "WHERE event_id=? AND status='PENDING' RETURNING *",
+                (event_id,),
+            ).fetchall()
         return conn.execute(
             "WITH claimed AS ("
             " SELECT id FROM webhook_events WHERE status='PENDING' ORDER BY id"

@@ -360,3 +360,82 @@ def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(monkeypatch
         for c in cases:
             count = conn.execute("SELECT COUNT(*) FROM audit_logs WHERE event_id = ?", (c["event_id"],)).fetchone()[0]
             assert count >= 1
+
+
+def test_crash_between_authorization_and_razorpay_call_preserves_resumable_outbox_intent(monkeypatch):
+    """
+    Simulate a crash occurring immediately after authorization & transactional outbox persistence,
+    BEFORE the outbound Razorpay network call.
+    Verify that upon process restart/recovery, the pending intent is preserved in a valid, resumable state.
+    """
+    import app.db as db
+    from app.pipeline import RecoveryPipeline
+    from app.execution.simulator import SubscriptionSimulator
+    from app.execution.outbox import get_pending_intents, claim_pending_intent, mark_intent_status
+
+    db.init_db()
+
+    case_id = f"EVT-CRASH-TEST-{int(time.time())}"
+    case = {
+        "event_id": case_id,
+        "customer_name": "Crash Test Customer",
+        "amount": 2499.0,
+        "subscription_status": "pending",
+        "invoice_status": "issued",
+        "payment_method_type": "international_card",
+        "attempt_number": 1,
+        "contact_count_7d": 0,
+        "customer_opted_out": False,
+        "native_retry_scheduled": False,
+        "current_time": "2026-08-29T12:00:00+05:30",
+        "is_live": True,
+    }
+
+    # 1. Pipeline instance 1 crashes right as _execute_live is called
+    pipe_pre_crash = RecoveryPipeline(simulator=SubscriptionSimulator(42))
+
+    class SimulatedProcessCrash(Exception):
+        pass
+
+    def crash_before_external_call(*args, **kwargs):
+        raise SimulatedProcessCrash("Simulated worker crash / SIGKILL immediately before outbound Razorpay call")
+
+    monkeypatch.setattr("app.pipeline.claim_pending_intent", crash_before_external_call)
+
+    with pytest.raises(SimulatedProcessCrash):
+        pipe_pre_crash.process(case, is_preview=False)
+
+    # 2. Worker restarts (new pipeline / worker process)
+    # The outbox intent must be present in 'PENDING' state with durable authorization
+    target_intents = get_pending_intents(case_id=case_id)
+    assert len(target_intents) == 1
+    intent = target_intents[0]
+    assert intent["status"] == "PENDING"
+    assert intent["action"] in ("MANUAL_RECOVERY", "NUDGE")
+
+    # Assert decision record is durably present in decision_records
+    with db.get_conn() as conn:
+        dec_row = conn.execute("SELECT * FROM decision_records WHERE decision_id = ?", (intent["decision_id"],)).fetchone()
+        assert dec_row is not None
+        assert dec_row["case_id"] == case_id
+
+    # 3. Resumed worker claims intent and finishes dispatch exactly once
+    claimed = claim_pending_intent(intent["id"])
+    assert claimed is not None
+    assert claimed["status"] == "PROCESSING"
+
+    # Worker calls Razorpay provider and stores response
+    mark_intent_status(
+        intent["id"],
+        "EXECUTION_REQUESTED",
+        {
+            "status": "EXECUTION_REQUESTED",
+            "payment_link_id": "plink_resumed_123",
+            "payment_link_url": "https://rzp.io/rzp/resumed",
+        },
+    )
+
+    with db.get_conn() as conn:
+        final_intent = conn.execute("SELECT * FROM execution_intents WHERE id = ?", (intent["id"],)).fetchone()
+        assert final_intent["status"] == "EXECUTION_REQUESTED"
+        assert "plink_resumed_123" in str(final_intent["result_json"])

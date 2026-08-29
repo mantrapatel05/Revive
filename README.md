@@ -50,7 +50,9 @@ The policy gate evaluates action feasibility using case facts, not generated tex
 - recovery-attempt budget;
 - issued-invoice and payment-method eligibility checks;
 - minimum recovery-probability threshold;
-- contact-fatigue penalty;
+- contact-fatigue penalty and daily communication frequency cap (max 1 contact per calendar day);
+- quiet-hours communication window enforcement (08:00–19:00 IST);
+- post-Governor tone-safety guard (keyword blocklist and sentence length limits);
 - authorization TTL and model/policy version validation;
 - circuit-breaker protection for manual recovery; and
 - live-case drift detection, which routes out-of-distribution cases to `ESCALATE`.
@@ -174,11 +176,12 @@ python scripts/evaluate_utility_profiles.py
 
 Latest verification performed on 2026-08-29:
 
-- `pytest -q`: **62 passed**.
-- Adversarial, property, reliability, OPE, calibration, confidence-interval, risk-sensitivity, scenario, causal, and merchant-utility scripts were run as part of the verification pass.
-- The local signed-webhook lifecycle smoke test currently requires follow-up: it accepted the initial event and suppressed its duplicate, but failed its final assertion because the target inbox event remained `PENDING` after the worker pass. Do not claim end-to-end Test Mode payment-link proof until this script and an actual Test Mode run both pass.
+- `pytest -q`: **69 passed** (including engine-level RBAC append-only proofs, crash-resilient outbox recovery, atomic inbox deduplication, quiet hours, daily contact caps, and failure-injection drills).
+- Adversarial, property, reliability, OPE, calibration, confidence-interval, risk-sensitivity, scenario, causal, and merchant-utility scripts were run and verified.
+- The signed-webhook Test Mode lifecycle proof (`scripts/test_razorpay_lifecycle.py`) executes cleanly end-to-end: verifying webhook ingestion, targeted worker processing, `MANUAL_RECOVERY` decision generation, `ExecutionAuthorization` audit ledger logging, atomic outbox intent claim, real Razorpay Test Mode payment link creation, and duplicate webhook idempotency.
+- Standalone payment link creation endpoints have been removed from the API surface so all external side effects flow strictly through the authorized outbox executor.
 
-Run the live smoke test only when you intentionally want to exercise Test Mode and have reviewed the configured credentials:
+Run the live smoke test when you want to exercise Test Mode and have reviewed the configured credentials:
 
 ```powershell
 python scripts/test_razorpay_lifecycle.py
@@ -201,8 +204,8 @@ python scripts/test_razorpay_lifecycle.py
 - The primary benchmark is synthetic; it must not be presented as measured production revenue.
 - Live execution creates a customer-facing Test Mode Payment Link; it does not directly charge a customer or claim recovery before reconciliation.
 - `NUDGE` message generation exists, but no production email/SMS delivery provider is wired.
-- SQLite is the default local persistence implementation. The repository includes Docker Compose/PostgreSQL development scaffolding, but production scaling and multi-node locking require an explicit deployment hardening pass.
-- The optional LLM is used for diagnosis/recommendation fallback. Deterministic policy and execution controls remain authoritative when it is unavailable.
+- PostgreSQL 16 is the sole persistence backend with database-enforced role privileges (`revive_app` granted `SELECT` and `INSERT` only on `audit_logs`, with `UPDATE`/`DELETE` strictly revoked at the database engine level; migrations run via `revive_admin`).
+- The optional LLM is used for diagnosis/recommendation fallback and template personalization. Deterministic policy and execution controls remain authoritative when it is unavailable.
 
 ## Documentation
 

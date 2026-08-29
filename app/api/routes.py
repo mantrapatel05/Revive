@@ -99,33 +99,6 @@ def evaluation():
 def audit(request: Request, limit: int = 50):
     return {'logs': request.app.state.audit.recent(limit)}
 
-@router.post('/api/create-payment-link')
-async def create_payment_link_route(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    event_id = body.get('event_id', 'EVT-TEST')
-    amount = float(body.get('amount', 1999.0))
-    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
-        raise HTTPException(400, "Razorpay credentials not set in .env")
-    try:
-        from app.execution.razorpay import RazorpayAdapter
-        adapter = RazorpayAdapter()
-        res = adapter.create_payment_link(
-            amount_paise=int(amount * 100),
-            description=f"REVIVE Recovery Checkout for {event_id}",
-        )
-        return {
-            "status": "created",
-            "payment_link_id": res.get("id"),
-            "short_url": res.get("short_url"),
-            "amount": amount,
-            "event_id": event_id,
-        }
-    except Exception as exc:
-        raise HTTPException(502, f"Razorpay link creation failed: {exc}")
-
 @router.post('/api/run-case')
 async def run_case(request: Request):
     body = await request.json()

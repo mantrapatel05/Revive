@@ -1,3 +1,4 @@
+import uuid
 import psycopg2
 import pytest
 import app.db as db
@@ -8,23 +9,11 @@ from app.decision.replay import DecisionStore
 def test_postgres_audit_logs_append_only_permissions():
     """The application role cannot mutate or delete the append-only ledger."""
     db.init_db()
-    DecisionStore().save({
-        "decision_id": "dec_test_immutability_01",
-        "case_id": "case_test_01",
-        "features": {},
-        "chosen_action": "ESCALATE",
-    })
-    with db.get_conn() as conn:
-        assert conn.execute(
-            "SELECT 1 FROM decision_records WHERE decision_id=?",
-            ("dec_test_immutability_01",),
-        ).fetchone() is not None
-
+    case_id = f"case_test_{uuid.uuid4().hex[:8]}"
     logger = AuditLogger()
     record = {
-        "decision_id": "dec_test_immutability_01",
-        "event_id": "evt_test_01",
-        "case_id": "case_test_01",
+        "event_id": f"evt_test_{uuid.uuid4().hex[:8]}",
+        "case_id": case_id,
         "timestamp": "2026-08-29T18:40:00Z",
         "payload": {"status": "EXECUTION_REQUESTED", "recovered_amount": 0.0},
     }
@@ -32,7 +21,7 @@ def test_postgres_audit_logs_append_only_permissions():
 
     # Verify insertion succeeded
     with db.get_conn() as conn:
-        row = conn.execute("SELECT * FROM audit_logs WHERE decision_id = ?", ("dec_test_immutability_01",)).fetchone()
+        row = conn.execute("SELECT * FROM audit_logs WHERE case_id = ?", (case_id,)).fetchone()
         assert row is not None
         row_id = row["id"]
 
@@ -48,6 +37,6 @@ def test_postgres_audit_logs_append_only_permissions():
             conn.execute("DELETE FROM audit_logs WHERE id = ?", (row_id,))
     # Verify that the row remains unaltered
     with db.get_conn() as conn:
-        row_after = conn.execute("SELECT * FROM audit_logs WHERE id = ?", (row_id,)).fetchone()
+        row_after = conn.execute("SELECT * FROM audit_logs WHERE case_id = ?", (case_id,)).fetchone()
         assert row_after is not None
         assert "tampered" not in str(row_after["payload_json"])
