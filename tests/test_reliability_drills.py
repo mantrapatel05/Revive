@@ -204,8 +204,103 @@ def test_malformed_llm_output_fails_closed_and_preserves_audit(tmp_path, monkeyp
         assert payload["diagnosis"]["raw_llm_output"] == raw_bad_json
 
 
+def test_malformed_llm_messaging_fails_closed_and_logs_audit(tmp_path, monkeypatch):
+    """Scenario 2: Malformed LLM message-generation output fails closed, demotes to ESCALATE, and records audit entry."""
+    import json
+    from app import config
+    import app.db as db
+    from app.pipeline import RecoveryPipeline
+    from app.execution.simulator import SubscriptionSimulator
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test_msg_drill.db")
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test_msg_drill.db")
+    db.init_db()
+
+    pipeline = RecoveryPipeline(simulator=SubscriptionSimulator(42))
+
+    case = {
+        "event_id": "EVT-TEST-MSG-MALFORMED",
+        "customer_name": "Kavita Rao",
+        "amount": 2499.0,
+        "subscription_status": "pending",
+        "invoice_status": "issued",
+        "payment_method_type": "international_card",
+        "failure_reason": "insufficient_funds",
+        "attempt_number": 2,
+        "contact_count_7d": 1,
+        "customer_opted_out": False,
+        "native_retry_scheduled": False,
+        "current_time": "2026-08-29T12:00:00+05:30",
+    }
+
+    # Mock Groq to return malformed output missing required fields
+    raw_bad_msg_json = '{"message": "Please pay ₹2,499.00 here: https://rzp.io/rzp/demo"}'
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"choices": [{"message": {"content": raw_bad_msg_json}}]}
+
+    with patch("requests.post", return_value=mock_resp):
+        with patch("app.messaging.GROQ_API_KEY", "mock-groq-key"):
+            decision = pipeline.process(case, is_preview=False)
+
+    # Assertions
+    assert decision["chosen_action"] == "ESCALATE"
+    gen_msg = decision.get("generated_message")
+    assert gen_msg is not None
+    assert gen_msg["source"] == "llm_failed"
+    assert gen_msg["tone_check_passed"] is False
+    assert gen_msg["status"] == "BLOCKED_TONE_CHECK"
+
+    # Verify audit persistence
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT payload_json FROM audit_logs WHERE event_id = ?", ("EVT-TEST-MSG-MALFORMED",)).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        assert payload["generated_message"]["source"] == "llm_failed"
+        assert payload["generated_message"]["status"] == "BLOCKED_TONE_CHECK"
+
+
+def test_audit_tamper_attempt_raises_engine_rejection(tmp_path, monkeypatch):
+    """Scenario 3: Audit tamper attempt (UPDATE/DELETE) raises engine-level error (IntegrityError/InsufficientPrivilege)."""
+    import sqlite3
+    from app import config
+    import app.db as db
+    from app.audit.logger import AuditLogger
+
+    test_db = tmp_path / "test_tamper_drill.db"
+    monkeypatch.setattr(config, "DATABASE_PATH", test_db)
+    monkeypatch.setattr(db, "DATABASE_PATH", test_db)
+    db.init_db()
+
+    logger = AuditLogger()
+    record = {
+        "decision_id": "dec_tamper_test_01",
+        "event_id": "EVT-TAMPER-DRILL-01",
+        "case_id": "EVT-TAMPER-DRILL-01",
+        "timestamp": "2026-08-29T12:00:00Z",
+        "payload": {"status": "AUTHENTIC_RECORD"},
+    }
+    logger.log(record)
+
+    # 1. Attempt UPDATE -> must raise IntegrityError from prevent_audit_update trigger
+    with pytest.raises((sqlite3.IntegrityError, Exception)) as exc_update:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE audit_logs SET payload_json = ? WHERE event_id = ?",
+                ('{"tampered": true}', "EVT-TAMPER-DRILL-01"),
+            )
+    assert "audit_log is append-only: UPDATE forbidden" in str(exc_update.value) or "permission denied" in str(exc_update.value)
+
+    # 2. Attempt DELETE -> must raise IntegrityError from prevent_audit_delete trigger
+    with pytest.raises((sqlite3.IntegrityError, Exception)) as exc_delete:
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM audit_logs WHERE event_id = ?", ("EVT-TAMPER-DRILL-01",))
+    assert "audit_log is append-only: DELETE forbidden" in str(exc_delete.value) or "permission denied" in str(exc_delete.value)
+
+
 def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(tmp_path, monkeypatch):
-    """Scenario 2: Gateway provider down trips circuit breaker, short-circuits further calls, routes safely to ESCALATE."""
+    """Scenario 4: Gateway provider down trips circuit breaker, short-circuits further calls, routes safely to ESCALATE."""
     import json
     from app import config
     import app.db as db
