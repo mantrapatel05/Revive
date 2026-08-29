@@ -10,20 +10,45 @@ N=1000
 AMOUNTS=[499,999,1499,1999,2499,2999,3999,4999,7999]
 TRAIN_SEEDS=[101,202,303,404,505]
 
+# Realistic decline distribution matching Razorpay failure taxonomy (60% soft / 25% hard / 15% risk)
+DECLINE_SCENARIOS = [
+    # Soft declines (60% total)
+    {"source": "customer", "reason": "insufficient_funds", "decline_class": "soft", "weight": 0.28},
+    {"source": "gateway", "reason": "payment_timed_out", "decline_class": "soft", "weight": 0.12},
+    {"source": "bank", "reason": "bank_declined", "decline_class": "soft", "weight": 0.10},
+    {"source": "customer", "reason": "authentication_failed", "decline_class": "soft", "weight": 0.05},
+    {"source": "network", "reason": "gateway_downtime", "decline_class": "soft", "weight": 0.05},
+
+    # Hard declines (25% total)
+    {"source": "customer", "reason": "card_expired", "decline_class": "hard", "weight": 0.14},
+    {"source": "customer", "reason": "invalid_card", "decline_class": "hard", "weight": 0.06},
+    {"source": "bank", "reason": "card_disabled", "decline_class": "hard", "weight": 0.05},
+
+    # Risk / Fraud declines (15% total)
+    {"source": "bank", "reason": "issuer_suspected_fraud", "decline_class": "risk", "weight": 0.07},
+    {"source": "bank", "reason": "do_not_honor", "decline_class": "risk", "weight": 0.05},
+    {"source": "bank", "reason": "stolen_card", "decline_class": "risk", "weight": 0.03},
+]
+SCENARIO_WEIGHTS = [s["weight"] for s in DECLINE_SCENARIOS]
+
 def make_case(i):
-    source=random.choices(["customer","bank","gateway","network"],[.40,.25,.20,.15])[0]
-    reason={"customer":random.choices(["insufficient_funds","card_expired"],[.65,.35])[0],"bank":"bank_declined","gateway":"gateway_downtime","network":"network"}[source]
+    scen = random.choices(DECLINE_SCENARIOS, weights=SCENARIO_WEIGHTS)[0]
+    source = scen["source"]
+    reason = scen["reason"]
+    decline_class = scen["decline_class"]
     attempt=random.choices([1,2,3,4],[.48,.30,.15,.07])[0]
     state="pending" if attempt < 4 else "halted"
     return {
         "event_id":f"EVT-{i:05d}","subscription_id":f"SUB-{i:05d}","customer_id":f"CUST-{i:05d}",
+        "customer_name":f"Customer {i:04d}",
         "amount":random.choice(AMOUNTS),"attempt_number":attempt,"failure_source":source,"failure_reason":reason,
-        "subscription_status":state,"payment_method_type":random.choice(["domestic_card","international_card"]),
+        "decline_class":decline_class,"subscription_status":state,"payment_method_type":random.choice(["domestic_card","international_card"]),
         "invoice_status":random.choice(["issued","issued","draft"]),"days_since_last_success":random.randint(1,90),
         "prior_recoveries_count":random.randint(0,4),"payment_method_age_days":random.randint(7,720),
         "customer_tenure_days":random.randint(30,1500),"previous_success_rate":round(random.uniform(.25,.98),3),
         "previous_recovery_rate":round(random.uniform(.02,.85),3),"customer_opted_out":random.random()<.05,
         "native_retry_scheduled":state=="pending" and attempt<3,"contact_count_7d":random.randint(0,5),
+        "contacted_today":random.random()<.15,
         "nudge_incentive_cost":random.choice([0,0,25,50]),"manual_recovery_ops_cost":random.choice([0,2,5]),
         "escalation_ops_cost":random.choice([0,10,20]),"wait_expected_days":1.5,
         "expected_days_by_action":'{"NUDGE":1.5,"MANUAL_RECOVERY":0.0}',
