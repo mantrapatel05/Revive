@@ -78,6 +78,19 @@ def init_db():
         if "event_id" not in cols:
             conn.execute("ALTER TABLE audit_logs ADD COLUMN event_id TEXT")
 
+        # Engine-enforced append-only triggers for SQLite
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS prevent_audit_update
+        BEFORE UPDATE ON audit_logs
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only: UPDATE forbidden');
+        END;""")
+
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS prevent_audit_delete
+        BEFORE DELETE ON audit_logs
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only: DELETE forbidden');
+        END;""")
+
         conn.execute("""CREATE TABLE IF NOT EXISTS webhook_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT UNIQUE NOT NULL,
