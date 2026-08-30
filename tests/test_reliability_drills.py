@@ -177,9 +177,10 @@ def test_malformed_llm_output_fails_closed_and_preserves_audit(monkeypatch):
     results = []
     with patch("requests.post", return_value=mock_resp):
         with patch("app.diagnosis.GROQ_API_KEY", "mock-groq-key"):
-            for case in batch:
-                dec = pipeline.process(case, is_preview=False)
-                results.append(dec)
+            with patch("app.pipeline.generate_message", return_value={"source": "template", "tone_check_passed": True, "message": "Please update payment."}):
+                for case in batch:
+                    dec = pipeline.process(case, is_preview=False)
+                    results.append(dec)
 
     # 1. Assert batch processed without crashing
     assert len(results) == 3
@@ -331,6 +332,7 @@ def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(monkeypatch
             "subscription_status": "pending",
             "invoice_status": "issued",
             "payment_method_type": "international_card",
+            "failure_reason": "insufficient_funds",
             "attempt_number": 2,
             "contact_count_7d": 1,
             "customer_opted_out": False,
@@ -341,6 +343,9 @@ def test_provider_down_circuit_breaker_short_circuits_and_logs_audit(monkeypatch
         for i in range(1, 6)
     ]
 
+    mock_msg = {"source": "template", "tone_check_passed": True, "message": "Please update payment."}
+    monkeypatch.setattr("app.pipeline.ENABLE_TESTMODE_EXECUTION", True)
+    monkeypatch.setattr("app.pipeline.generate_message", lambda *args, **kwargs: mock_msg)
     results = [pipeline.process(c, is_preview=False) for c in cases]
 
     # (a) Circuit Breaker transitioned to OPEN
@@ -383,6 +388,7 @@ def test_crash_between_authorization_and_razorpay_call_preserves_resumable_outbo
         "subscription_status": "pending",
         "invoice_status": "issued",
         "payment_method_type": "international_card",
+        "failure_reason": "insufficient_funds",
         "attempt_number": 1,
         "contact_count_7d": 0,
         "customer_opted_out": False,
@@ -400,6 +406,9 @@ def test_crash_between_authorization_and_razorpay_call_preserves_resumable_outbo
     def crash_before_external_call(*args, **kwargs):
         raise SimulatedProcessCrash("Simulated worker crash / SIGKILL immediately before outbound Razorpay call")
 
+    mock_msg = {"source": "template", "tone_check_passed": True, "message": "Please update payment."}
+    monkeypatch.setattr("app.pipeline.ENABLE_TESTMODE_EXECUTION", True)
+    monkeypatch.setattr("app.pipeline.generate_message", lambda *args, **kwargs: mock_msg)
     monkeypatch.setattr("app.pipeline.claim_pending_intent", crash_before_external_call)
 
     with pytest.raises(SimulatedProcessCrash):

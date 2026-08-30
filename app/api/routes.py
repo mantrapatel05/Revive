@@ -114,8 +114,6 @@ async def run_case(request: Request):
     if row.empty:
         raise HTTPException(404, 'case not found')
     case = row.iloc[0].to_dict()
-    if ENABLE_TESTMODE_EXECUTION:
-        case['is_live'] = True
     pipe = request.app.state.pipeline
     is_preview = raw_risk_mode is not None
     risk_mode = str(raw_risk_mode).upper() if raw_risk_mode is not None else pipe.risk_mode

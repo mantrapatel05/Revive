@@ -26,7 +26,7 @@ db-down:
 	docker compose down
 
 db-migrate:
-	docker compose exec -T db psql -U revive_admin -d revive < schema.sql || psql "$${DATABASE_URL:-postgresql://revive_admin:revive_dev_password@localhost:5432/revive}" -f schema.sql
+	python scripts/migrate_db.py || docker compose exec -T db psql -U revive_admin -d revive < schema.sql
 
 db-reset:
 	docker compose exec -T db psql -U revive_admin -d revive -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || psql "$${DATABASE_URL:-postgresql://revive_admin:revive_dev_password@localhost:5432/revive}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"

@@ -293,7 +293,7 @@ def run_audit_tamper_drill() -> bool:
     with get_conn(admin=False) as conn:
         row = conn.execute(
             "INSERT INTO audit_logs (decision_id, event_id, case_id, timestamp, payload_json) VALUES (?, ?, ?, ?, ?) RETURNING id",
-            (f"dec_{test_case_id}", test_case_id, test_case_id, datetime.now(timezone.utc).isoformat(), json.dumps({"status": "AUTHENTIC_RECORD"})),
+            (None, test_case_id, test_case_id, datetime.now(timezone.utc).isoformat(), json.dumps({"status": "AUTHENTIC_RECORD"})),
         ).fetchone()
         row_id = row["id"] if row else 1
         print(f"\n[STEP 1] Inserted authentic audit row ID {row_id} (case_id: {test_case_id}).")

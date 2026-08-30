@@ -5,7 +5,12 @@ ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
 from app.config import DATA_DIR
 from app.execution.simulator import SubscriptionSimulator
 
-random.seed(20260820)
+import argparse
+parser = argparse.ArgumentParser(description="Generate synthetic case and training data")
+parser.add_argument("--seed", type=int, default=20260820, help="Random seed for data generation")
+args, _ = parser.parse_known_args()
+
+random.seed(args.seed)
 N=1000
 AMOUNTS=[499,999,1499,1999,2499,2999,3999,4999,7999]
 TRAIN_SEEDS=[101,202,303,404,505]

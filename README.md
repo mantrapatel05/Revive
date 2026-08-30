@@ -74,11 +74,11 @@ The checked-in evaluation snapshot (`data/evaluation/final_results.json`) uses 2
 | Constrained oracle | INR 124,321.78 | INR 115,766.00 |
 | Absolute oracle | INR 233,707.97 | INR 255,644.00 |
 
-- **Safe Policy Capture:** 84.09% — incremental value captured by REVIVE relative to the constrained oracle above the native `WAIT` baseline.
-- **Mean decision regret:** INR 6.01 per synthetic case.
-- **Adversarial safety:** 0 unsafe automated actions in the 100-case adversarial suite.
-
-ML-only is intentionally shown as an unconstrained reference, not as the desired operating policy: it may maximize raw simulated value by selecting actions that violate merchant safety constraints.
+- **Safe Policy Capture:** 84.76% ± 7.80% (range 74.08%–94.71% across 5 synthetic cohorts; 84.09% on reference seed) — incremental value captured by REVIVE relative to the constrained oracle above the native `WAIT` baseline.
+- **Mean decision regret:** INR 7.98 ± INR 4.10 (INR 6.01 on reference seed) per synthetic case.
+- **Baseline Comparison:** REVIVE is designed to outperform operational alternatives—**Native (`WAIT`)** (zero-touch default) and **Rule-based** (static heuristics)—while enforcing strict merchant constraints.
+- **Unconstrained Reference Ceilings:** **ML-only** and **Absolute Oracle** are unconstrained theoretical references, not valid operating policies; they achieve higher unconstrained numbers by selecting actions that violate merchant safety bounds, quiet hours, and customer fatigue caps.
+- **Constrained Target:** **Constrained Oracle** represents the theoretical maximum achievable under the identical safety policy rules.
 
 For methodology and limitations, read [Evaluation Integrity](docs/EVALUATION_INTEGRITY.md), [Model Card](docs/MODEL_CARD.md), and [Causal Evaluation](docs/CAUSAL_EVALUATION.md).
 
@@ -88,7 +88,7 @@ For methodology and limitations, read [Evaluation Integrity](docs/EVALUATION_INT
 
 - Python 3.11+ (the project is currently exercised with Python 3.12)
 - `pip`
-- Optional: Docker and Docker Compose for the development PostgreSQL service
+- Docker and Docker Compose (or a running PostgreSQL 16 instance)
 
 ```powershell
 python -m venv .venv
@@ -99,9 +99,11 @@ Copy-Item .env.example .env
 
 For the local synthetic workflow, Razorpay and Groq credentials are not required.
 
-Generate data, train the model, and calculate the dashboard benchmark:
+Start the database, run migrations, generate data, train the model, and calculate the dashboard benchmark:
 
 ```powershell
+docker compose up -d db
+python scripts/migrate_db.py   # or: make db-migrate
 python scripts/generate_data.py
 python scripts/train_model.py
 python scripts/evaluate_final.py
@@ -176,7 +178,7 @@ python scripts/evaluate_utility_profiles.py
 
 Latest verification performed on 2026-08-29:
 
-- `pytest -q`: **69 passed** (including engine-level RBAC append-only proofs, crash-resilient outbox recovery, atomic inbox deduplication, quiet hours, daily contact caps, and failure-injection drills).
+- `pytest -q`: **63 passed** (including engine-level RBAC append-only proofs, crash-resilient outbox recovery, atomic inbox deduplication, quiet hours, daily contact caps, and failure-injection drills).
 - Adversarial, property, reliability, OPE, calibration, confidence-interval, risk-sensitivity, scenario, causal, and merchant-utility scripts were run and verified.
 - The signed-webhook Test Mode lifecycle proof (`scripts/test_razorpay_lifecycle.py`) executes cleanly end-to-end: verifying webhook ingestion, targeted worker processing, `MANUAL_RECOVERY` decision generation, `ExecutionAuthorization` audit ledger logging, atomic outbox intent claim, real Razorpay Test Mode payment link creation, and duplicate webhook idempotency.
 - Standalone payment link creation endpoints have been removed from the API surface so all external side effects flow strictly through the authorized outbox executor.

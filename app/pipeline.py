@@ -14,7 +14,7 @@ from app.execution.outbox import enqueue_execution_intent, save_decision_and_int
 from app.execution.circuit_breaker import CircuitBreaker
 from app.db import init_db
 from app.approval import create_approval_request
-from app.config import DATA_DIR
+from app.config import DATA_DIR, ENABLE_TESTMODE_EXECUTION
 from app.monitoring.drift import DriftDetector
 from app.diagnosis import diagnose
 from app.messaging import generate_message
@@ -72,7 +72,7 @@ class RecoveryPipeline:
         }
 
     def process(self, case: dict, source: str = "ml", risk_mode: str | None = None, is_preview: bool = False) -> dict:
-        is_live = bool(case.get("is_live", False))
+        is_live = bool(case.get("is_live", False)) and ENABLE_TESTMODE_EXECUTION
         distribution_shift_flagged = False
         drift_details = None
 
@@ -402,7 +402,7 @@ class RecoveryPipeline:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **versions(),
         }
-        decision["decision_id"] = stable_hash({"event_id": case["event_id"], "versions": versions(), "action": best_action})[:20]
+        decision["decision_id"] = decision_id
         decision["features"] = dict(case)
         if not is_preview:
             self.decision_store.save(decision)
