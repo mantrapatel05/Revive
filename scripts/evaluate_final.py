@@ -28,7 +28,7 @@ def main():
     gate=PolicyGate(); econ=EconomicsEngine(); runs={}
     for seed in SEEDS:
         sim=SubscriptionSimulator(seed)
-        buckets={k:[] for k in ['native','rule','ml_only','revive','constrained_oracle','oracle']}
+        buckets={k:[] for k in ['native','rule','rule_constrained','ml_only','revive','constrained_oracle','oracle']}
         expected_policy_values={k:[] for k in buckets}
         regrets=[]; blocked_upside=[]
         for idx,case in enumerate(cases):
@@ -44,6 +44,14 @@ def main():
             elif reason=='bank_declined': rule_action='NUDGE'
             else: rule_action='WAIT'
             add('rule',rule_action)
+            # Policy-constrained rule baseline: same heuristic action, same gate as REVIVE
+            rule_prob = sim.get_true_probability(case, rule_action)
+            rule_policy = gate.evaluate(case, rule_action, rule_prob, bool(case.get('native_retry_scheduled', False)))
+            if rule_policy.decision == 'APPROVED':
+                constrained_rule_action = rule_action
+            else:
+                constrained_rule_action = rule_policy.action or 'ESCALATE'
+            add('rule_constrained', constrained_rule_action)
             preds=model_predictions[idx]
             probs={a:preds[a]['mean'] for a in preds}; std={a:preds[a]['std'] for a in preds}
             conservative={a:max(0.0,probs[a]-std[a]) for a in probs}
@@ -74,7 +82,7 @@ def main():
                          'mean_decision_regret':float(np.mean(regrets)),
                          'policy_avoided_upside':float(np.sum(blocked_upside)),'total_at_risk':total}
 
-    names=['native','rule','ml_only','revive','constrained_oracle','oracle']
+    names=['native','rule','rule_constrained','ml_only','revive','constrained_oracle','oracle']
     summary={}
     for name in names:
         vals=[runs[s]['expected_policy_value'][name] for s in runs]

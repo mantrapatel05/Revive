@@ -68,16 +68,19 @@ The checked-in evaluation snapshot (`data/evaluation/final_results.json`) uses 2
 | Strategy | Mean expected net value | Mean realized net value |
 | --- | ---: | ---: |
 | Native / `WAIT` | INR 112,305.16 | INR 107,865.80 |
-| Rule-based baseline | INR 178,299.12 | INR 175,999.40 |
-| ML-only, unconstrained | INR 228,005.53 | INR 248,109.20 |
+| Rule-based (constrained) | INR 119,590.83 | INR 109,388.40 |
 | **REVIVE** | **INR 122,409.35** | **INR 116,737.00** |
 | Constrained oracle | INR 124,321.78 | INR 115,766.00 |
-| Absolute oracle | INR 233,707.97 | INR 255,644.00 |
+| | | |
+| Rule-based (unconstrained) | INR 178,299.12 | INR 175,999.40 |
+| ML-only (unconstrained) | INR 228,005.53 | INR 248,109.20 |
+| Absolute oracle (unconstrained) | INR 233,707.97 | INR 255,644.00 |
+
+The primary comparison is between strategies operating under identical safety constraints (top section). The unconstrained references (bottom section) are included for transparency but are not valid operating policies — they achieve higher raw numbers by ignoring customer opt-out protection, quiet-hours windows (08:00–19:00 IST), daily contact-frequency caps, amount ceilings, and customer fatigue penalties that REVIVE enforces on every decision. The unconstrained rule-based baseline, for example, recovers INR 175,999 only because it would send recovery messages outside permitted hours, re-contact customers who have already been contacted today, and attempt manual recovery on amounts that exceed the merchant's automatic-action ceiling — actions that REVIVE's policy gate correctly blocks.
 
 - **Safe Policy Capture:** 84.76% ± 7.80% (range 74.08%–94.71% across 5 synthetic cohorts; 84.09% on reference seed) — incremental value captured by REVIVE relative to the constrained oracle above the native `WAIT` baseline.
 - **Mean decision regret:** INR 7.98 ± INR 4.10 (INR 6.01 on reference seed) per synthetic case.
-- **Baseline Comparison:** REVIVE is designed to outperform operational alternatives—**Native (`WAIT`)** (zero-touch default) and **Rule-based** (static heuristics)—while enforcing strict merchant constraints.
-- **Unconstrained Reference Ceilings:** **ML-only** and **Absolute Oracle** are unconstrained theoretical references, not valid operating policies; they achieve higher unconstrained numbers by selecting actions that violate merchant safety bounds, quiet hours, and customer fatigue caps.
+- **Fair Baseline Comparison:** Under the same policy constraints, REVIVE (INR 116,737) outperforms the rule-based heuristic (INR 109,388) by INR 7,349 — a 6.7% improvement attributable to ML-driven action selection, not constraint relaxation.
 - **Constrained Target:** **Constrained Oracle** represents the theoretical maximum achievable under the identical safety policy rules.
 
 For methodology and limitations, read [Evaluation Integrity](docs/EVALUATION_INTEGRITY.md), [Model Card](docs/MODEL_CARD.md), and [Causal Evaluation](docs/CAUSAL_EVALUATION.md).
@@ -174,9 +177,11 @@ python scripts/evaluate_risk_sensitivity.py
 python scripts/evaluate_scenarios.py
 python scripts/evaluate_causal.py
 python scripts/evaluate_utility_profiles.py
+python scripts/evaluate_seed_sensitivity.py
+python scripts/rehearse_failure_injection.py
 ```
 
-Latest verification performed on 2026-08-29:
+Latest verification performed on 2026-08-31:
 
 - `pytest -q`: **63 passed** (including engine-level RBAC append-only proofs, crash-resilient outbox recovery, atomic inbox deduplication, quiet hours, daily contact caps, and failure-injection drills).
 - Adversarial, property, reliability, OPE, calibration, confidence-interval, risk-sensitivity, scenario, causal, and merchant-utility scripts were run and verified.
