@@ -117,8 +117,14 @@ async def run_case(request: Request):
     if 'is_live' in body:
         case['is_live'] = body['is_live']
     pipe = request.app.state.pipeline
-    is_preview = raw_risk_mode is not None
-    risk_mode = str(raw_risk_mode).upper() if raw_risk_mode is not None else pipe.risk_mode
+    is_live_req = bool(body.get('is_live', False))
+    # Live execution must not be treated as preview: preview is risk-dial exploration without side effects.
+    # When is_live is true we ignore explicit risk_mode and use persisted merchant config.
+    is_preview = raw_risk_mode is not None and not is_live_req
+    if is_live_req:
+        risk_mode = pipe.risk_mode
+    else:
+        risk_mode = str(raw_risk_mode).upper() if raw_risk_mode is not None else pipe.risk_mode
     if risk_mode not in pipe.RISK_MODES:
         raise HTTPException(400, f"Invalid risk_mode '{risk_mode}'. Must be one of: {list(pipe.RISK_MODES.keys())}")
     return pipe.process(case, source="ml", risk_mode=risk_mode, is_preview=is_preview)
@@ -148,6 +154,57 @@ def replay(case_id: str, request: Request):
     true = {a: sim.get_true_probability(case, a) for a in sim.ACTIONS}
     values = sim.economics.rank_incremental(case, true)
     return {'case_id': case_id, 'probabilities': true, 'expected_net_values': values}
+
+@router.get('/demo/pay/{link_id}', response_class=HTMLResponse)
+def demo_pay_page(link_id: str, request: Request):
+    """Local demo checkout page for when Razorpay Test Mode is rate-limited (429).
+    Shows a working payment page for demo recording instead of dead rzp.io link.
+    """
+    from app.execution.razorpay import RazorpayAdapter
+    data = RazorpayAdapter._DEMO_STORE.get(link_id, {})
+    amount_paise = int(data.get("amount_paise") or data.get("amount") or 0)
+    amount_inr = amount_paise / 100 if amount_paise else 0
+    desc = data.get("description") or f"REVIVE recovery — {link_id}"
+    # Fallback if not in store (e.g., real rzp.io link or direct access)
+    if not data:
+        # Try to show generic demo
+        amount_inr = 1999
+        desc = f"REVIVE Test Mode Payment — {link_id}"
+    # Pretty amount
+    amount_str = f"₹{amount_inr:,.2f}" if amount_inr else "₹1,999.00"
+    html = f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>REVIVE — Test Checkout {link_id}</title>
+<style>
+:root{{--paper:#F6F3EA;--ink:#1E1C18;--stamp:#1F3A5F;--rule:#DBD4C2;}}
+*{{box-sizing:border-box}}body{{margin:0;font:14px/1.5 system-ui;background:var(--paper);color:var(--ink);display:grid;place-items:center;min-height:100vh;padding:24px}}
+.card{{max-width:480px;width:100%;background:#fff;border:1px solid var(--rule);border-top:3px solid var(--stamp);padding:28px;box-shadow:0 4px 24px rgba(0,0,0,.06)}}
+.badge{{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--stamp);color:var(--stamp);font:700 10px system-ui;letter-spacing:.06em;text-transform:uppercase;background:#E3E9F1}}
+h1{{margin:14px 0 6px;font:600 20px Georgia}} .muted{{color:#55524A;font-size:12px}}
+.amount{{margin:18px 0;font:700 32px ui-monospace;letter-spacing:-.02em}} .desc{{padding:12px;background:#F6F3EA;border-left:2px solid var(--stamp);font-size:12px;line-height:1.6}}
+.btn{{display:block;width:100%;margin-top:18px;height:44px;background:var(--stamp);color:#fff;border:0;font:700 13px system-ui;cursor:pointer}} .btn:hover{{background:#152C48}}
+.foot{{margin-top:14px;text-align:center;color:#8C8878;font:11px system-ui}}
+.dot{{width:6px;height:6px;border-radius:50%;background:#2E5C46;display:inline-block}}
+</style>
+</head>
+<body>
+<div class=\"card\">
+  <div class=\"badge\"><span class=\"dot\"></span> Razorpay Test Mode — REVIVE Demo</div>
+  <h1>Complete your payment</h1>
+  <div class=\"muted\">Payment Link <code>{link_id}</code> &middot; Test Mode &middot; No real money moves</div>
+  <div class=\"amount\">{amount_str}</div>
+  <div class=\"desc\"><b>For:</b> {desc}<br><b>Status:</b> PAYMENT_PENDING — created by REVIVE LiveExecutor<br><span style=\"color:#6B4E12\">Demo fallback: Razorpay returned 429 rate-limit, so this local page is shown for recording. A real key would show rzp.io checkout.</span></div>
+  <button class=\"btn\" onclick=\"this.textContent='✓ Payment simulated — check webhook';this.style.background='#2E5C46'\">Pay {amount_str} — Test Card</button>
+  <div class=\"foot\">REVIVE 6.0 — Risk-aware recovery &middot; <a href=\"/\" style=\"color:var(--stamp)\">Back to Control Room</a><br>Real Razorpay Test Mode would use <code>https://rzp.io/i/{link_id}</code></div>
+</div>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
 
 @router.get('/')
 def dashboard():

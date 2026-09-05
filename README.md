@@ -59,6 +59,66 @@ The policy gate evaluates action feasibility using case facts, not generated tex
 
 See [Policy Specification](docs/POLICY_SPEC.md) for the policy rules and identifiers.
 
+## Architecture
+
+End-to-end decision and execution flow (see [`revive_flow_clean.mermaid`](revive_flow_clean.mermaid) for the source):
+
+```mermaid
+flowchart TD
+    A(["Razorpay Webhook<br/>payment.failed / subscription.pending"]) --> B["HMAC-SHA256 Verification<br/>+ Idempotent Inbox<br/>webhook_events UNIQUE event_id"]
+    B --> C["Worker: Claim PENDING Event<br/>Transform → Recovery Case (10-dim vector)"]
+    C --> D{"Inbound Authorization Gate<br/>TTL 300s + policy/model version"}
+    D -- "Invalid / Expired" --> ESC
+    D -- "Valid / None" --> E["Decline Diagnosis<br/>DECLINE_RULES + Groq LLM fallback<br/>soft / hard / risk / unclear"]
+    E --> F{"Live Drift Check<br/>PSI z>3 or out-of-range<br/>(live only)"}
+    F -- Yes --> ESC
+    F -- No --> G["Calibrated T-Learner<br/>20x Logistic + OOB Isotonic<br/>P_cal(a,x) + sigma(a,x)"]
+    G --> H["Incremental Economics + Risk Discount<br/>V(a)=P_cal*Amount-Cost, DeltaV=V(a)-V(WAIT)<br/>LCB = DeltaV - z*sigma, INR 50 fatigue if contact_count_7d>2"]
+    H --> I["Deterministic Policy Gate<br/>11 hard checks: CUST-OPT, SUB-STATE, WAIT-STATE,<br/>FIN-AUTO-002, RET-LIMIT, INV/PM-ELIG, DUP-NATIVE,<br/>PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001, RISK-DECLINE"]
+    I --> J{Policy Decision}
+    J -- Blocked --> ESC
+    J -- Approved --> K["ExecutionAuthorization (300s TTL)<br/>+ Atomic Outbox TX<br/>decision_records + execution_intents PENDING"]
+    K --> L{Selected Action}
+    L -- WAIT --> W["WAIT<br/>Preserve Native Gateway Retry<br/>NO_ACTION"]
+    L -- NUDGE --> N["Generate Recovery Message<br/>Template (action, decline_class) + Tone Guard<br/>blocklist + max 2 sentences"]
+    N -- "Tone FAIL" --> ESC
+    N -- "Tone PASS" --> O["Claim PENDING intent → PROCESSING<br/>Circuit Breaker Check"]
+    L -- MANUAL_RECOVERY --> M["Circuit Breaker<br/>CLOSED --3 fails--> OPEN (60s) --probe--> HALF_OPEN"]
+    M -- OPEN --> ESC
+    M -- "CLOSED / HALF_OPEN OK" --> P["LiveExecutor: POST /v1/payment_links<br/>or Simulator.execute()"]
+    O --> P
+    P --> Q{Provider Response}
+    Q -- "200 OK" --> R["EXECUTION_REQUESTED<br/>PAYMENT_PENDING"]
+    Q -- "Timeout / 5xx" --> U["UNKNOWN<br/>→ Reconciliation Queue<br/>GET /v1/payment_links/{id}"]
+    Q -- "Error / No Creds" --> ESC
+    R --> S["Reconciliation<br/>payment_link.paid / payment.captured → CONFIRMED<br/>expired / cancelled → FAILED"]
+    U --> S
+    W --> T["Append-Only Audit Ledger<br/>audit_logs (revive_app SELECT+INSERT only; UPDATE/DELETE revoked)<br/>+ decision_store + approval_queue"]
+    R --> T
+    S --> T
+    ESC["ESCALATE<br/>Human Review Queue<br/>QUEUED"] --> T
+
+    classDef default fill:#f7f7f7,stroke:#333,color:#111,stroke-width:1px
+    classDef gate fill:#fff,stroke:#111,color:#111,stroke-width:2px
+    classDef decision fill:#fff,stroke:#555,color:#111,stroke-width:1px,stroke-dasharray:2 2
+    classDef escalate fill:#fff,stroke:#111,color:#111,stroke-width:2px
+
+    class I,K gate
+    class D,F,J,L,Q decision
+    class ESC escalate
+```
+
+Key boundaries enforced by the diagram:
+
+- **Ingestion boundary:** HMAC verification + PostgreSQL `webhook_events` unique-key inbox; duplicates return HTTP 200 with `status: duplicate` and zero secondary intents.
+- **Authorization boundary:** `ExecutionAuthorization` TTL 300s bound to `policy_version`/`model_version`/`event_id`/`action`; stale or mismatched tokens route to `ESCALATE` (`AUTH-VER-001`).
+- **Probabilistic vs deterministic authority:** T-Learner and economics are advisory; `PolicyGate` removes infeasible actions before ranking.
+- **Post-Governor guard:** Tone safety (keyword blocklist + max 2 sentences) runs after message generation; violation fails closed to `ESCALATE`.
+- **Execution boundary:** Atomic `decision_records` + `execution_intents` transaction, claim `PENDING → PROCESSING`, circuit breaker (`CLOSED → OPEN → HALF_OPEN`) gates live calls.
+- **Reconciliation boundary:** `UNKNOWN` never blind-retries; async `GET /v1/payment_links/{id}` reconciles to `CONFIRMED`/`FAILED`.
+
+See [Architecture](docs/ARCHITECTURE.md) for the full specification.
+
 ## Evaluation: what the numbers mean
 
 REVIVE's batch benchmark uses a **synthetic simulator with counterfactual ground truth**. It is intended to compare recovery policies reproducibly; it is not evidence of production revenue recovered from Razorpay merchants.
@@ -198,13 +258,17 @@ python scripts/test_razorpay_lifecycle.py
 
 | Area | Location |
 | --- | --- |
-| HTTP API and Control Room | `app/api/`, `frontend/index.html` |
-| Recovery orchestration | `app/pipeline.py`, `app/agents/` |
-| Economics, policy, and diagnosis | `app/economics.py`, `app/policy/`, `app/diagnosis.py` |
-| Webhooks, execution, and reconciliation | `app/events/`, `app/execution/`, `scripts/worker.py` |
-| Audit, approvals, receipts, and configuration | `app/audit/`, `app/approval.py`, `app/receipt.py`, `app/db.py` |
-| Training and evaluation | `app/models/`, `app/evaluation/`, `scripts/` |
+| HTTP API and Control Room | `app/api/routes.py`, `app/api/webhooks.py`, `frontend/index.html` |
+| Recovery orchestration | `app/pipeline.py`, `app/agents/recovery_agent.py` |
+| Economics, policy, and diagnosis | `app/economics.py`, `app/policy/gate.py`, `app/diagnosis.py` |
+| Messaging (post-Governor) | `app/messaging.py` (template + tone guard) |
+| Drift detection | `app/monitoring/drift.py` (PSI z>3 + range check) |
+| Webhooks, execution, and reconciliation | `app/events/signature.py`, `app/events/idempotency.py`, `app/execution/authorization.py`, `app/execution/outbox.py`, `app/execution/live_executor.py`, `app/execution/circuit_breaker.py`, `app/execution/reconciliation.py`, `scripts/worker.py` |
+| Audit, approvals, receipts, and configuration | `app/audit/logger.py`, `app/approval.py`, `app/receipt.py`, `app/db.py`, `schema.sql` |
+| Decision versioning & replay | `app/decision/versioning.py`, `app/decision/replay.py` |
+| Training and evaluation | `app/models/calibrated_tlearner.py`, `app/evaluation/`, `scripts/generate_data.py`, `scripts/train_model.py`, `scripts/evaluate_final.py` |
 | Tests | `tests/` |
+| Mermaid source | `revive_flow_clean.mermaid` (rendered above) |
 
 ## Operational boundaries
 
@@ -216,10 +280,13 @@ python scripts/test_razorpay_lifecycle.py
 
 ## Documentation
 
+All files below are directly linked from the README and verified present (per `error.md`):
+
 - [Architecture](docs/ARCHITECTURE.md)
 - [Policy Specification](docs/POLICY_SPEC.md)
 - [Model Card](docs/MODEL_CARD.md)
 - [Evaluation Integrity](docs/EVALUATION_INTEGRITY.md)
+- [Causal Evaluation](docs/CAUSAL_EVALUATION.md)
 - [Razorpay Mapping and Claim Boundaries](docs/RAZORPAY_MAPPING.md)
 - [Reliability Model](docs/RELIABILITY.md)
 - [Failure Postmortem](docs/FAILURE_POSTMORTEM.md)

@@ -76,10 +76,17 @@ def reconcile_webhook_event(payload: dict, event_id: str | None = None) -> dict:
     Guarantees that final_state becomes CONFIRMED only upon provider evidence.
     """
     event_type = payload.get("event", "")
-    plink_obj = payload.get("payload", {}).get("payment_link", {}).get("entity", {})
-    pay_obj = payload.get("payload", {}).get("payment", {}).get("entity", {})
-    sub_obj = payload.get("payload", {}).get("subscription", {}).get("entity", {})
-    inv_obj = payload.get("payload", {}).get("invoice", {}).get("entity", {})
+    # Razorpay webhook nests objects directly under payload, e.g. payload.payment_link = {entity:'payment_link', id:'plink_...'}
+    # Some docs show extra entity wrapper, handle both
+    def _unwrap(obj):
+        if isinstance(obj, dict) and isinstance(obj.get("entity"), dict):
+            return obj.get("entity", {})
+        return obj if isinstance(obj, dict) else {}
+
+    plink_obj = _unwrap(payload.get("payload", {}).get("payment_link", {}))
+    pay_obj = _unwrap(payload.get("payload", {}).get("payment", {}))
+    sub_obj = _unwrap(payload.get("payload", {}).get("subscription", {}))
+    inv_obj = _unwrap(payload.get("payload", {}).get("invoice", {}))
 
     payment_link_id = plink_obj.get("id") or pay_obj.get("payment_link_id") or inv_obj.get("payment_link_id")
     payment_id = pay_obj.get("id")

@@ -10,7 +10,7 @@ data/generated/*.csv
 data/evaluation/*.json
 data/evaluation/evaluation_report.md
 .pytest_cache/
-docs/
+extra_docs/
 venv/
 .venv/
 env/

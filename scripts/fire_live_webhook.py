@@ -1,12 +1,27 @@
 import hmac
 import hashlib
 import json
+import os
+import sys
 import time
+from pathlib import Path
+
 import requests
-from app.config import RAZORPAY_WEBHOOK_SECRET
+from dotenv import load_dotenv
+
+# Ensure project root is on sys.path so `import app.*` works when running
+# as `py scripts/fire_live_webhook.py` (Python adds `scripts/` to sys.path, not project root)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+load_dotenv()
+
+try:
+    from app.config import RAZORPAY_WEBHOOK_SECRET  # type: ignore
+except ModuleNotFoundError:
+    RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
 
 def fire_webhook():
-    secret = (RAZORPAY_WEBHOOK_SECRET or "revive-webhook-secret-123").encode("utf-8")
+    secret = (RAZORPAY_WEBHOOK_SECRET or os.getenv("RAZORPAY_WEBHOOK_SECRET", "revive-webhook-secret-123")).encode("utf-8")
     payload = {
         "entity": "event",
         "account_id": "acc_enterprise_prod",
@@ -33,9 +48,10 @@ def fire_webhook():
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     sig = hmac.new(secret, body, hashlib.sha256).hexdigest()
     
-    # We use the current timestamp to make sure the event ID is always unique 
-    # so it doesn't get blocked as a duplicate from previous runs!
-    event_id = f"evt_live_demo_{int(time.time())}"
+    # IMPORTANT FOR DEMO RECORDING: 
+    # Using a fixed ID guarantees the second run always triggers the "duplicate" idempotency logic.
+    # To do a fresh take or dry run, change "001" to "002", etc., before you start recording!
+    event_id = "evt_live_demo_fixed_001"
     
     headers = {
         "Content-Type": "application/json",
