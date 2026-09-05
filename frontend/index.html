@@ -536,11 +536,11 @@ pre{margin:0;max-height:420px;overflow:auto;padding:16px;border:1px solid var(--
 
   <section class="command" aria-label="Case command deck">
     <div class="command-main">
-      <label class="field" for="case-input"><span class="field-label">Event ID</span><input id="case-input" value="EVT-00557" aria-label="Event ID"></label>
+      <label class="field" for="case-input"><span class="field-label">Event ID</span><input id="case-input" value="EVT-00837" aria-label="Event ID"></label>
       <button class="btn primary" id="run-btn">Run case</button>
+      <button class="btn" id="run-live-btn" style="color:var(--cyan);border-color:var(--cyan)">⚡ Run Live</button>
       <button class="btn" id="random-btn">Random</button>
       <button class="btn" id="receipt-btn" title="Export a printable decision audit receipt">Export receipt</button>
-      <button class="btn accent-btn" id="live-link-btn" title="Generate a live Razorpay test checkout link for this case">Create live payment link</button>
     </div>
     <div class="riskcontrols">
       <span class="eyebrow">Risk dial (preview)</span>
@@ -550,11 +550,11 @@ pre{margin:0;max-height:420px;overflow:auto;padding:16px;border:1px solid var(--
       <span class="preview-tag" id="preview-indicator" style="display:none">Preview — not persisted</span>
     </div>
     <div class="presets">
-      <button class="preset" data-case="EVT-00806"><span>Opted out</span><code>EVT-00806</code></button>
-      <button class="preset" data-case="EVT-00956"><span>Native retry</span><code>EVT-00956</code></button>
-      <button class="preset" data-case="EVT-00958"><span>Gateway downtime</span><code>EVT-00958</code></button>
-      <button class="preset active" data-case="EVT-00557"><span>Bank declined</span><code>EVT-00557</code></button>
-      <button class="preset" data-case="EVT-00338"><span>Risk sensitive</span><code>EVT-00338</code></button>
+      <button class="preset" data-case="EVT-00159"><span>Opted out</span><code>EVT-00159</code></button>
+      <button class="preset" data-case="EVT-00338"><span>Native retry</span><code>EVT-00338</code></button>
+      <button class="preset" data-case="EVT-00350"><span>Gateway downtime</span><code>EVT-00350</code></button>
+      <button class="preset active" data-case="EVT-00512"><span>Expired (Passes Gate)</span><code>EVT-00512</code></button>
+      <button class="preset" data-case="EVT-00666"><span>Risk sensitive</span><code>EVT-00666</code></button>
       <button class="btn duplicate" id="duplicate-btn">Simulate duplicate webhook</button>
     </div>
   </section>
@@ -716,7 +716,7 @@ pre{margin:0;max-height:420px;overflow:auto;padding:16px;border:1px solid var(--
 <div class="toast" id="toast"><strong id="toast-title">SYSTEM EVENT</strong><span id="toast-body"></span></div>
 <script>
   const ACTIONS=['WAIT','NUDGE','MANUAL_RECOVERY','ESCALATE'];let riskMode='BALANCED',gateEnforced=true,currentDecision=null,currentReplay=null,toastTimer;const $=id=>document.getElementById(id);const money=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:0});const exact=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});const esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-  async function api(url,options={}){const r=await fetch(url,options);let d;try{d=await r.json()}catch{d={}}if(!r.ok)throw Error(d.detail||d.error||`HTTP ${r.status}`);return d}function clock(){$('clock').textContent=new Date().toISOString().slice(11,19)+' UTC'}clock();setInterval(clock,1000);function toast(title,body){$('toast-title').textContent=title;$('toast-body').textContent=body;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4300)}function loading(on,random=false){$('run-btn').disabled=on;$('random-btn').disabled=on;$('run-btn').textContent=on?'Running…':'Run case';$('random-btn').textContent=on&&random?'Picking…':'Random'}
+  async function api(url,options={}){const r=await fetch(url,options);let d;try{d=await r.json()}catch{d={}}if(!r.ok)throw Error(d.detail||d.error||`HTTP ${r.status}`);return d}function clock(){$('clock').textContent=new Date().toISOString().slice(11,19)+' UTC'}clock();setInterval(clock,1000);function toast(title,body){$('toast-title').textContent=title;$('toast-body').textContent=body;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4300)}function loading(on,random=false){$('run-btn').disabled=on;$('run-live-btn').disabled=on;$('random-btn').disabled=on;$('run-btn').textContent=on?'Running…':'Run case';$('random-btn').textContent=on&&random?'Picking…':'Random'}
   function context(f,r){let x=[['Amount at risk',exact(r.amount??f.amount??0),'money'],['Failure reason',f.failure_reason],['Failure source',f.failure_source],['Attempt count',`${f.attempt_number??'—'} of 4`],['7-day contacts',`${f.contact_count_7d??0} touches`,f.contact_count_7d>2?'fatigue':''],['Subscription state',f.subscription_status],['Payment method',f.payment_method_type],['Native retry',f.native_retry_scheduled?'scheduled':'not scheduled'],['Customer opt-out',f.customer_opted_out?'YES':'no'],['Tenure',f.customer_tenure_days!=null?`${f.customer_tenure_days} days`:'—']];$('context').innerHTML=x.map(([l,v,c])=>`<div class="datum"><div class="label">${l}</div><div class="data ${c==='money'?'money':''} ${l==='Customer opt-out'&&v==='YES'?'bad':''}">${esc(v)}</div>${c==='fatigue'?'<div class="fatigue">₹50 fatigue cost applied</div>':''}</div>`).join('')}
   function predictions(r,replay){let p=r.probabilities||replay?.probabilities||{},u=r.uncertainty||{};$('predictions').innerHTML=ACTIONS.map(a=>{let n=+p[a]||0,s=+u[a]||0,l=Math.max(0,(n-s)*100),w=Math.min(100,(n+s)*100)-l;return `<div class="prediction"><div class="action ${r.chosen_action===a?'chosen':''}">${a}</div><div class="bar"><span class="band" style="left:${l}%;width:${w}%"></span><span class="fill" style="width:${n*100}%"></span></div><div class="prob">${(n*100).toFixed(1)}% <small>±${(s*100).toFixed(1)}%</small></div></div>`}).join('')}
   function economics(r,replay){currentDecision=r;currentReplay=replay;let rep_vals=replay?.expected_net_values||r.incremental_values||{};let ungated_action=Object.keys(rep_vals).reduce((a,b)=>(+rep_vals[a]>+rep_vals[b]?a:b),'WAIT');let ungated_val=+rep_vals[ungated_action]||0;let gated_action=r.chosen_action||'WAIT';let gated_val=+rep_vals[gated_action]||+r.incremental_values?.[gated_action]||0;let gap=Math.max(0,ungated_val-gated_val);let focal=$('ungated-focal');if(focal){focal.style.display='block';if(gated_action===ungated_action){focal.className='ungated-focal match';focal.innerHTML=`✓ Gate agreed with the unconstrained optimum on this case (<b>${gated_action}</b> = ${exact(gated_val)}).`}else{focal.className='ungated-focal mismatch';let reasons=r.policy_reasons||[];let failedChecks=(r.policy_checks||[]).filter(c=>!c.passed).map(c=>c.description);let realReason=reasons.join(' · ')||failedChecks.join(' · ')||(r.features?.customer_opted_out?'Customer opted out':(r.features?.native_retry_scheduled?'Conflicting native retry in progress':'Deterministic policy safety constraint'));focal.innerHTML=`<strong>UNCONSTRAINED OPTIMUM DIVERGENCE</strong> · Raw ML proposes <strong>${ungated_action} (${exact(ungated_val)})</strong> vs Safe Gated <strong>${gated_action} (${exact(gated_val)})</strong>.<br><span class="ungated-gap">INR GAP: +${exact(gap)}</span> uncaptured upside to enforce rule: <em>“${esc(realReason)}”</em>.`}}let activeHighlight=gateEnforced?gated_action:ungated_action;let max=Math.max(1,...ACTIONS.map(a=>Math.abs(+rep_vals[a]||0)));$('chosen-badge').textContent=(gateEnforced?'chosen: ':'hypothetical: ')+activeHighlight;$('chosen-badge').className='tag '+(gateEnforced?(r.policy_decision==='APPROVED'?'approved':'blocked'):'ref');$('economics').innerHTML=ACTIONS.map(a=>{let n=+rep_vals[a]||0,k=n>0?'pos':n<0?'neg':'zero',isSel=a===activeHighlight;return `<div class="econ ${isSel?'selected':''}"><div class="action ${isSel?'chosen':''}">${a}${isSel?`<span class="selectednote">${gateEnforced?'SELECTED':'UNGATED OPTIMUM'}</span>`:''}</div><div class="track"><div class="valuefill ${k}" style="width:${Math.abs(n)/max*100}%"></div></div><div class="value ${n>0?'good':n<0?'bad':''}">${n>0?'+':''}${exact(n)}</div></div>`}).join('')}
@@ -816,33 +816,14 @@ pre{margin:0;max-height:420px;overflow:auto;padding:16px;border:1px solid var(--
       if(btn){btn.disabled=false;btn.textContent='Save Settings';}
     }
   }
-  async function loadCase(id=$('case-input').value,random=false,overrideRisk=riskMode){id=id.trim().toUpperCase();if(!id)return toast('CASE ID REQUIRED','Enter an event ID before running the pipeline.');$('case-input').value=id;document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.case===id));loading(true,random);try{let bodyPayload={event_id:id};if(overrideRisk)bodyPayload.risk_mode=overrideRisk;let r=await api('/api/run-case',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bodyPayload)}),replay=null;try{replay=await api('/api/replay/'+encodeURIComponent(id))}catch(e){console.warn('Replay unavailable',e)}render(r,replay);await loadApprovals();toast(r.preview?'RISK PREVIEW UPDATED':'CASE READY',`${id} evaluated under ${r.risk_mode} (z=${r.risk_z}) · ${r.chosen_action||'no'} action selected.`)}catch(e){toast('CASE REQUEST FAILED',e.message)}finally{loading(false)}}
+  async function loadCase(id=$('case-input').value,random=false,overrideRisk=riskMode,isLive=false){id=id.trim().toUpperCase();if(!id)return toast('CASE ID REQUIRED','Enter an event ID before running the pipeline.');$('case-input').value=id;document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.case===id));loading(true,random);try{let bodyPayload={event_id:id};if(overrideRisk)bodyPayload.risk_mode=overrideRisk;if(isLive)bodyPayload.is_live=true;let r=await api('/api/run-case',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bodyPayload)}),replay=null;try{replay=await api('/api/replay/'+encodeURIComponent(id))}catch(e){console.warn('Replay unavailable',e)}render(r,replay);await loadApprovals();toast(r.preview?'RISK PREVIEW UPDATED':(isLive?'LIVE CASE COMPLETED':'TEST CASE COMPLETED'),`${id} evaluated under ${r.risk_mode} (z=${r.risk_z}) · ${r.chosen_action||'no'} action selected.`)}catch(e){toast('CASE REQUEST FAILED',e.message)}finally{loading(false)}}
   function benchmarks(s){if(!s)return;let max=Math.max(1,...Object.values(s).map(x=>+x.mean_expected_net||0)),draw=(id,arr)=>$(id).innerHTML=arr.map(([k,l,c])=>{let v=s[k]?.mean_expected_net;if(v==null)return'';return `<div class="benchmark"><div class="benchmarklabel">${l}</div><div class="benchmarkbar"><div class="benchmarkfill ${c}" style="width:${(+v/max)*100}%"></div></div><div class="benchmarkvalue">${money(v)}</div></div>`}).join('');draw('safe-bench',[['revive','REVIVE','revive'],['constrained_oracle','Constrained oracle','oracle'],['rule','Rule-based',''],['native','Native / WAIT','']]);draw('ref-bench',[['ml_only','ML-only','ref'],['oracle','Absolute oracle','ref']])}
   async function initOverview(){try{let d=await api('/api/evaluation');if(d.error)throw Error(d.error);let capture=d.safe_policy_capture!=null?(d.safe_policy_capture*100).toFixed(2)+'%':'—';$('kpi-capture').textContent=capture;$('pulse-capture').textContent=capture;$('kpi-recovery').textContent=money(d.summary?.revive?.mean_expected_net);$('kpi-regret').textContent=d.mean_decision_regret!=null?exact(d.mean_decision_regret):'—';let lift=(d.summary?.revive?.mean_expected_net||0)-(d.summary?.native?.mean_expected_net||0);$('kpi-lift').innerHTML=`<span class="good">+${money(lift)}</span> lift over native wait`;benchmarks(d.summary);await loadApprovals();await loadSettings();}catch(e){console.warn(e);toast('OVERVIEW UNAVAILABLE',e.message)}}
-  $('run-btn').onclick=()=>loadCase(undefined,false,undefined);
+  $('run-btn').onclick=()=>loadCase(undefined,false,undefined,false);
+  $('run-live-btn').onclick=()=>loadCase(undefined,false,undefined,true);
   $('random-btn').onclick=async()=>{loading(true,true);try{let d=await api('/api/random-case');$('case-input').value=d.event_id;await loadCase(d.event_id,true,undefined)}catch(e){toast('RANDOM CASE FAILED',e.message);loading(false)}};
   $('case-input').onkeydown=e=>e.key==='Enter'&&loadCase(undefined,false,undefined);
-  $('receipt-btn').onclick=()=>{let id=$('case-input').value.trim()||'EVT-00557';window.open('/receipt/'+encodeURIComponent(id),'_blank')};
-  $('live-link-btn').onclick=async()=>{
-    let id=$('case-input').value.trim()||'EVT-00557';
-    let amt=currentDecision?.amount||2499;
-    toast('CREATING LINK',`Generating live Razorpay checkout for ${id}…`);
-    try{
-      let d=await api('/api/create-payment-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:id,amount:amt})});
-      if(d.short_url){
-        let plinkCard=$('payment-link-card');
-        if(plinkCard){
-          plinkCard.style.display='flex';
-          $('plink-url-text').textContent=d.short_url;
-          $('plink-action-btn').href=d.short_url;
-        }
-        window.open(d.short_url,'_blank');
-        toast('CHECKOUT LINK OPENED',`Created Razorpay link ${d.short_url}`);
-      }
-    }catch(e){
-      toast('LINK CREATION FAILED',e.message);
-    }
-  };
+  $('receipt-btn').onclick=()=>{let id=$('case-input').value.trim()||'EVT-00837';window.open('/receipt/'+encodeURIComponent(id),'_blank')};
   $('gate-toggle-btn').onclick=toggleGate;
   document.querySelectorAll('.risk').forEach(b=>b.onclick=()=>{riskMode=b.dataset.risk;document.querySelectorAll('.risk').forEach(x=>x.classList.toggle('active',x===b));loadCase(undefined,false,riskMode)});
   document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>loadCase(b.dataset.case,false,undefined));
@@ -874,7 +855,7 @@ pre{margin:0;max-height:420px;overflow:auto;padding:16px;border:1px solid var(--
     let modal = $('policy-modal');
     if(modal) modal.style.display = 'none';
   }
-  $('duplicate-btn').onclick=async()=>{let id=$('case-input').value.trim()||'EVT-00557';toast('WEBHOOK RECEIVED',`Processing ${id}; idempotency key acquired.`);try{await api('/api/run-case',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:id})});setTimeout(()=>toast('DUPLICATE SUPPRESSED',`Lock found for ${id}. No duplicate external intent was created.`),700)}catch(e){toast('WEBHOOK RESULT',e.message)}};
+  $('duplicate-btn').onclick=async()=>{let id=$('case-input').value.trim()||'EVT-00837';toast('WEBHOOK RECEIVED',`Processing ${id}; idempotency key acquired.`);try{await api('/api/run-case',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:id})});setTimeout(()=>toast('DUPLICATE SUPPRESSED',`Lock found for ${id}. No duplicate external intent was created.`),700)}catch(e){toast('WEBHOOK RESULT',e.message)}};
   window.addEventListener('DOMContentLoaded',()=>{initOverview();loadCase('EVT-00557',false,undefined);loadApprovals();loadSettings();});
 </script>
 <div class="policy-modal-overlay" id="policy-modal" style="display:none" onclick="if(event.target===this)closePolicyModal()">
