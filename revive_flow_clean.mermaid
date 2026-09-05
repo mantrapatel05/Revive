@@ -6,9 +6,9 @@ flowchart TD
     D -- "Valid / None" --> E["Decline Diagnosis<br/>DECLINE_RULES + Groq LLM fallback<br/>soft / hard / risk / unclear"]
     E --> F{"Live Drift Check<br/>PSI z>3 or out-of-range<br/>(live only)"}
     F -- Yes --> ESC
-    F -- No --> G["Calibrated T-Learner<br/>20x Logistic + OOB Isotonic<br/>P_cal(a,x) + sigma(a,x)"]
-    G --> H["Incremental Economics + Risk Discount<br/>V(a)=P_cal*Amount-Cost, DeltaV=V(a)-V(WAIT)<br/>LCB = DeltaV - z*sigma, INR 50 fatigue if contact_count_7d>2"]
-    H --> I["Deterministic Policy Gate<br/>11 hard checks: CUST-OPT, SUB-STATE, WAIT-STATE,<br/>FIN-AUTO-002, RET-LIMIT, INV/PM-ELIG, DUP-NATIVE,<br/>PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001, RISK-DECLINE"]
+    F -- No --> G["Calibrated T-Learner<br/>8x Logistic + OOB Isotonic<br/>P_cal(a,x) + sigma(a,x)"]
+    G --> H["Incremental Economics + Risk Discount<br/>V(a)=P_cal*Amount*discount-Cost, DeltaV=V(a)-V(WAIT)<br/>Conservative P = P_cal - z*sigma, INR 50 fatigue if contact_count_7d>2"]
+    H --> I["Deterministic Policy Gate<br/>12 hard checks: CUST-OPT, SUB-STATE, WAIT-STATE,<br/>FIN-AUTO-002, RET-LIMIT, INV/PM-ELIG, DUP-NATIVE,<br/>PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001, RISK-DECLINE"]
     I --> J{Policy Decision}
     J -- Blocked --> ESC
     J -- Approved --> K["ExecutionAuthorization (300s TTL)<br/>+ Atomic Outbox TX<br/>decision_records + execution_intents PENDING"]
@@ -23,10 +23,8 @@ flowchart TD
     O --> P
     P --> Q{Provider Response}
     Q -- "200 OK" --> R["EXECUTION_REQUESTED<br/>PAYMENT_PENDING"]
-    Q -- "Timeout / 5xx" --> U["UNKNOWN<br/>→ Reconciliation Queue<br/>GET /v1/payment_links/{id}"]
-    Q -- "Error / No Creds" --> ESC
-    R --> S["Reconciliation<br/>payment_link.paid / payment.captured → CONFIRMED<br/>expired / cancelled → FAILED"]
-    U --> S
+    Q -- "API Error / Retries Exhausted / No Creds" --> ESC
+    R --> S["Reconciliation<br/>payment_link.paid / payment.captured → CONFIRMED<br/>expired / cancelled → FAILED<br/>status query timeout → UNKNOWN (re-queried)"]
     W --> T["Append-Only Audit Ledger<br/>audit_logs (revive_app SELECT+INSERT only; UPDATE/DELETE revoked)<br/>+ decision_store + approval_queue"]
     R --> T
     S --> T

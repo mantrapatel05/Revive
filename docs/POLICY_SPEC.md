@@ -26,6 +26,7 @@ ML Uplift Prediction ───► Economics Ranking ───► Policy Gate ─
 | `PM-ELIG-001`  | Payment Method Support | `case.payment_method_type != "domestic_card"` | Rejects manual recovery attempts on domestic cards requiring step-up 2FA |
 | `DUP-NATIVE-001`| Native Retry Collision | `case.native_retry_scheduled == False` | Blocks manual charging when the payment gateway already has an active retry scheduled |
 | `PROB-MIN-001` | Minimum Probability Floor | `P_cal(MANUAL_RECOVERY) >= 0.20` | Rejects low-probability manual outreach where expected cost exceeds recovery likelihood |
+| `RISK-DECLINE-001` | Risk Decline Safety Block | `case.decline_class not in {"risk", "risk_decline"}` | Blocks `NUDGE` and `MANUAL_RECOVERY` on fraud/risk-flagged declines with `"Decline flagged as risk or suspected fraud"`; routes to `WAIT` or `ESCALATE` |
 
 ## Soft Constraints & Economic Adjustments
 

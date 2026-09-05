@@ -35,7 +35,7 @@ REVIVE 6.0 is an enterprise revenue recovery decision engine that evaluates fail
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    CAUSAL T-LEARNER INFERENCE ENGINE                    │
-│  - Action-Specific Bootstrap Ensemble (20 Base Logistic Estimators)     │
+│  - Action-Specific Bootstrap Ensemble (8 Base Logistic Estimators)     │
 │  - Out-of-Bag (OOB) Isotonic Probability Calibration                    │
 │  - Bootstrap Standard Deviation Dispersion Proxy: σ(a, x)               │
 └────────────────────────────────────┬────────────────────────────────────┘
@@ -53,7 +53,7 @@ REVIVE 6.0 is an enterprise revenue recovery decision engine that evaluates fail
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                   DETERMINISTIC SAFETY POLICY GATE                      │
-│  - Hard Checks (11): CUST-OPT-001, SUB-STATE-001, WAIT-STATE-001,       │
+│  - Hard Checks (12): CUST-OPT-001, SUB-STATE-001, WAIT-STATE-001,       │
 │    FIN-AUTO-002, RET-LIMIT-001, INV-ELIG-001, PM-ELIG-001,               │
 │    DUP-NATIVE-001, PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001,         │
 │    RISK-DECLINE-001 (risk_decline → block)                               │

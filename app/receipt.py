@@ -50,7 +50,7 @@ def generate_receipt_data(decision: dict, replay: dict | None = None) -> dict:
             "customer_tenure_days": features.get("customer_tenure_days", 0),
         },
         "model_predictions": {
-            "estimator": "Calibrated T-Learner (20 Bootstrap Ensemble)",
+            "estimator": "Calibrated T-Learner (8 Bootstrap Ensemble)",
             "model_version": decision.get("model_version", "calibrated-tlearner-v5"),
             "actions": {
                 a: {

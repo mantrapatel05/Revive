@@ -11,7 +11,7 @@ For a failed subscription payment, REVIVE evaluates four actions:
 | Action | Meaning |
 | --- | --- |
 | `WAIT` | Preserve the gateway's native retry path. |
-| `NUDGE` | Generate a recovery message; live delivery integration is not yet enabled. |
+| `NUDGE` | Generate a recovery message post-gate (tone-guarded); on a live eligible case it creates a Razorpay Test Mode Payment Link via `LiveExecutor._execute_nudge`. |
 | `MANUAL_RECOVERY` | For an eligible live case, create a Razorpay Test Mode Payment Link. |
 | `ESCALATE` | Stop automation and create a human-review request. |
 
@@ -19,15 +19,19 @@ The decision flow is:
 
 ```text
 Razorpay webhook
-  -> HMAC verification + idempotent inbox
-  -> worker transforms the event into a recovery case
+  -> HMAC verification + idempotent inbox (UNIQUE event_id)
+  -> worker claims event, transforms it into a recovery case
+  -> inbound authorization gate (TTL 300s + version check)
   -> decline diagnosis + live drift screening
   -> calibrated action estimates + uncertainty
-  -> incremental-value ranking against WAIT
-  -> deterministic policy gate
-  -> authorization + durable execution intent
-  -> Test Mode Payment Link, wait, or human escalation
-  -> provider reconciliation + append-only audit record
+  -> incremental-value ranking against WAIT (LCB risk discount)
+  -> deterministic policy gate (12 hard checks)
+  -> post-governor message generation + tone-safety guard
+  -> authorization + atomic outbox intent (PENDING)
+  -> claim intent + circuit-breaker check + live/simulator execution
+  -> EXECUTION_REQUESTED / UNKNOWN + reconciliation to CONFIRMED/FAILED
+  -> wait preservation, Test Mode Payment Link, or human escalation
+  -> append-only audit record
 ```
 
 ## Design principles
@@ -44,6 +48,7 @@ Razorpay webhook
 The policy gate evaluates action feasibility using case facts, not generated text. Current controls include:
 
 - customer opt-out protection;
+- risk-decline protection (fraud/compliance declines block customer-facing actions);
 - recoverable subscription-state checks;
 - native-retry collision prevention;
 - automatic-action amount ceilings and configurable human-review threshold;
@@ -72,9 +77,9 @@ flowchart TD
     D -- "Valid / None" --> E["Decline Diagnosis<br/>DECLINE_RULES + Groq LLM fallback<br/>soft / hard / risk / unclear"]
     E --> F{"Live Drift Check<br/>PSI z>3 or out-of-range<br/>(live only)"}
     F -- Yes --> ESC
-    F -- No --> G["Calibrated T-Learner<br/>20x Logistic + OOB Isotonic<br/>P_cal(a,x) + sigma(a,x)"]
-    G --> H["Incremental Economics + Risk Discount<br/>V(a)=P_cal*Amount-Cost, DeltaV=V(a)-V(WAIT)<br/>LCB = DeltaV - z*sigma, INR 50 fatigue if contact_count_7d>2"]
-    H --> I["Deterministic Policy Gate<br/>11 hard checks: CUST-OPT, SUB-STATE, WAIT-STATE,<br/>FIN-AUTO-002, RET-LIMIT, INV/PM-ELIG, DUP-NATIVE,<br/>PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001, RISK-DECLINE"]
+    F -- No --> G["Calibrated T-Learner<br/>8x Logistic + OOB Isotonic<br/>P_cal(a,x) + sigma(a,x)"]
+    G --> H["Incremental Economics + Risk Discount<br/>V(a)=P_cal*Amount*discount-Cost, DeltaV=V(a)-V(WAIT)<br/>Conservative P = P_cal - z*sigma, INR 50 fatigue if contact_count_7d>2"]
+    H --> I["Deterministic Policy Gate<br/>12 hard checks: CUST-OPT, SUB-STATE, WAIT-STATE,<br/>FIN-AUTO-002, RET-LIMIT, INV/PM-ELIG, DUP-NATIVE,<br/>PROB-MIN-001, TIME-QUIET-001, FREQ-DAILY-001, RISK-DECLINE"]
     I --> J{Policy Decision}
     J -- Blocked --> ESC
     J -- Approved --> K["ExecutionAuthorization (300s TTL)<br/>+ Atomic Outbox TX<br/>decision_records + execution_intents PENDING"]
@@ -89,10 +94,8 @@ flowchart TD
     O --> P
     P --> Q{Provider Response}
     Q -- "200 OK" --> R["EXECUTION_REQUESTED<br/>PAYMENT_PENDING"]
-    Q -- "Timeout / 5xx" --> U["UNKNOWN<br/>→ Reconciliation Queue<br/>GET /v1/payment_links/{id}"]
-    Q -- "Error / No Creds" --> ESC
-    R --> S["Reconciliation<br/>payment_link.paid / payment.captured → CONFIRMED<br/>expired / cancelled → FAILED"]
-    U --> S
+    Q -- "API Error / Retries Exhausted / No Creds" --> ESC
+    R --> S["Reconciliation<br/>payment_link.paid / payment.captured → CONFIRMED<br/>expired / cancelled → FAILED<br/>status query timeout → UNKNOWN (re-queried)"]
     W --> T["Append-Only Audit Ledger<br/>audit_logs (revive_app SELECT+INSERT only; UPDATE/DELETE revoked)<br/>+ decision_store + approval_queue"]
     R --> T
     S --> T
